@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
 
-const PORT = 8000;
+const PORT = 56780;
 const API_TARGET = 'http://127.0.0.1:8045'; // 本地AI API地址
 
 // 数据存储目录
