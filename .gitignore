@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Generated data
+data/
+logs/
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude Code
+.claude/
+.omc/
+CLAUDE.md
+
+# Backup files
+*.backup
+*.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Lock files (optional, uncomment if needed)
+# package-lock.json

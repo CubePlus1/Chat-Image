@@ -1,0 +1,1492 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI文生图工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 800px;
+            width: 100%;
+            padding: 40px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 2em;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 600;
+        }
+
+        input[type="text"],
+        textarea,
+        select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus,
+        textarea:focus,
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+            font-family: inherit;
+        }
+
+        .options-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        button {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .result {
+            margin-top: 30px;
+            display: none;
+        }
+
+        .result.active {
+            display: block;
+        }
+
+        .result img {
+            width: 100%;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .image-actions {
+            margin-top: 10px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .download-btn {
+            flex: 1;
+            padding: 8px 15px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+
+        .download-btn:hover {
+            background: #45a049;
+        }
+
+        .quality-toggle {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 10px;
+        }
+
+        .quality-btn {
+            flex: 1;
+            padding: 6px 10px;
+            background: #f0f0f0;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s;
+        }
+
+        .quality-btn.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .quality-btn:hover:not(.active) {
+            border-color: #667eea;
+            background: #f5f7ff;
+        }
+
+        .image-loader {
+            position: relative;
+            background: #f5f5f5;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .image-loader img {
+            width: 100%;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .image-loader img.loaded {
+            opacity: 1;
+        }
+
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.9);
+            pointer-events: none;
+        }
+
+        .loading-overlay.hidden {
+            display: none;
+        }
+
+        .mini-spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+        }
+
+        .load-status {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #667eea;
+        }
+
+        .error-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(255, 0, 0, 0.1);
+            padding: 20px;
+            text-align: center;
+        }
+
+        .retry-btn {
+            margin-top: 10px;
+            padding: 8px 16px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .retry-btn:hover {
+            background: #5568d3;
+        }
+
+        .quality-indicator {
+            display: inline-block;
+            padding: 4px 8px;
+            background: #e3f2fd;
+            color: #1976d2;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-left: 8px;
+        }
+
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .error.active {
+            display: block;
+        }
+
+        .api-config {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .api-config input {
+            margin-bottom: 10px;
+        }
+
+        .info {
+            background: #e3f2fd;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            color: #1976d2;
+        }
+
+        .success-message {
+            background: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #28a745;
+            font-size: 16px;
+        }
+
+        .api-config summary {
+            cursor: pointer;
+            font-weight: 600;
+            padding: 10px;
+            user-select: none;
+        }
+
+        .api-config summary:hover {
+            background: #efefef;
+            border-radius: 6px;
+        }
+
+        .debug {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            display: none;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .debug.active {
+            display: block;
+        }
+
+        .debug pre {
+            margin: 0;
+            font-size: 12px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .debug-toggle {
+            margin-top: 10px;
+            padding: 8px 15px;
+            background: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .debug-toggle:hover {
+            background: #e0e0e0;
+        }
+
+        .upload-section {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 8px;
+            border: 2px dashed #ddd;
+        }
+
+        .upload-section.active {
+            border-color: #667eea;
+            background: #f0f4ff;
+        }
+
+        .upload-btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .upload-btn:hover {
+            background: #5568d3;
+        }
+
+        .drop-zone {
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+            transition: all 0.3s;
+        }
+
+        .drop-zone.drag-over {
+            border-color: #667eea;
+            background: #f0f4ff;
+        }
+
+        .preview-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .preview-item {
+            position: relative;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 3px solid transparent;
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+
+        .preview-item.primary {
+            border-color: #667eea;
+        }
+
+        .preview-item.secondary {
+            border-color: #ddd;
+        }
+
+        .preview-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .preview-item img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+        }
+
+        .image-badge {
+            position: absolute;
+            top: 5px;
+            left: 5px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            color: white;
+        }
+
+        .badge-primary {
+            background: #667eea;
+        }
+
+        .badge-secondary {
+            background: #999;
+        }
+
+        .remove-btn {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: rgba(255, 0, 0, 0.8);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+        }
+
+        .remove-btn:hover {
+            background: rgba(255, 0, 0, 1);
+        }
+
+        .mode-toggle {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .mode-btn {
+            flex: 1;
+            padding: 10px;
+            border: 2px solid #ddd;
+            background: white;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .mode-btn.active {
+            border-color: #667eea;
+            background: #667eea;
+            color: white;
+        }
+
+        .mode-btn:hover {
+            border-color: #667eea;
+        }
+
+        .prompt-row {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+        }
+        .prompt-row textarea { flex: 1; }
+        .enhance-btn {
+            width: auto;
+            padding: 12px 16px;
+            white-space: nowrap;
+            font-size: 14px;
+        }
+        .enhance-btn:disabled { background: #ccc; cursor: wait; }
+        .enhance-error { color: #c33; font-size: 14px; margin-top: 8px; display: none; }
+        .enhance-error.active { display: block; }
+        .enhance-preview {
+            display: none;
+            margin-top: 12px;
+            padding: 15px;
+            background: #f0f4ff;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+        }
+        .enhance-preview.active { display: block; }
+        .enhance-preview-text { white-space: pre-wrap; line-height: 1.6; margin-bottom: 12px; color: #333; }
+        .enhance-preview-actions { display: flex; gap: 10px; }
+        .enhance-preview-actions button { flex: 1; padding: 10px; font-size: 14px; }
+        .apply-btn { background: #4CAF50; }
+        .apply-btn:hover { background: #45a049; }
+        .cancel-btn { background: #999; }
+        .cancel-btn:hover { background: #777; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎨 AI文生图工具</h1>
+
+        <div class="info">
+            💡 输入描述，点击生成，即可创作 AI 图像
+        </div>
+
+        <div class="mode-toggle">
+            <button class="mode-btn active" onclick="switchMode('text')">📝 纯文生图</button>
+            <button class="mode-btn" onclick="switchMode('image')">🖼️ 图+文生图</button>
+        </div>
+
+        <div class="upload-section" id="uploadSection">
+            <label style="display: block; margin-bottom: 10px; font-weight: 600;">📤 上传参考图片（可多张）</label>
+
+            <!-- 拖拽上传区 -->
+            <div class="drop-zone" id="dropZone">
+                <input type="file" id="imageInput" accept="image/*" multiple style="display: none;" onchange="handleImageUpload(event)">
+                <label for="imageInput" class="upload-btn">📁 选择图片</label>
+                <p style="margin-top: 10px; color: #999; font-size: 14px;">或拖拽图片到此处</p>
+            </div>
+
+            <!-- 图片预览网格 -->
+            <div class="preview-grid" id="previewGrid"></div>
+        </div>
+
+        <details class="api-config">
+            <summary>⚙️ 高级设置（点击展开）</summary>
+            <div class="input-group">
+                <label>API端点</label>
+                <input type="text" id="apiEndpoint" placeholder="/api/generate" value="/api/generate">
+            </div>
+            <div class="input-group">
+                <label>API密钥（可选）</label>
+                <input type="text" id="apiKey" placeholder="sk-... 或留空" value="sk-default">
+            </div>
+        </details>
+
+        <details class="api-config">
+            <summary>✨ AI润色设置（点击展开）</summary>
+            <div class="input-group">
+                <label>Chat API Base URL</label>
+                <input type="text" id="enhanceApiBase" placeholder="https://api.openai.com/v1" value="http://localhost:8045/v1">
+            </div>
+            <div class="input-group">
+                <label>API密钥</label>
+                <input type="text" id="enhanceApiKey" placeholder="sk-...">
+            </div>
+            <div class="input-group">
+                <label>模型名称</label>
+                <input type="text" id="enhanceModel" placeholder="gpt-4o-mini" value="gemini-2.5-flash">
+            </div>
+        </details>
+
+        <div class="input-group">
+            <label>图片描述</label>
+            <div class="prompt-row">
+                <textarea id="prompt" placeholder="例如：一座未来主义风格的城市，霓虹灯闪烁，飞行汽车穿梭其间">一座未来主义风格的城市</textarea>
+                <button type="button" class="enhance-btn" id="enhanceBtn" onclick="enhancePrompt()">✨ AI润色</button>
+            </div>
+            <div class="enhance-error" id="enhanceError"></div>
+            <div class="enhance-preview" id="enhancePreview"></div>
+        </div>
+
+        <div class="options-row">
+            <div class="input-group">
+                <label>图片比例</label>
+                <select id="aspectRatio">
+                    <option value="1-1">1:1 正方形</option>
+                    <option value="16-9" selected>16:9 横屏</option>
+                    <option value="9-16">9:16 竖屏</option>
+                    <option value="4-3">4:3 传统</option>
+                    <option value="3-4">3:4 竖版</option>
+                    <option value="21-9">21:9 超宽</option>
+                </select>
+            </div>
+
+            <div class="input-group">
+                <label>图片质量</label>
+                <select id="quality">
+                    <option value="2k">2K</option>
+                    <option value="4k" selected>4K</option>
+                </select>
+            </div>
+
+            <div class="input-group">
+                <label>生成数量</label>
+                <select id="count">
+                    <option value="1" selected>1张</option>
+                    <option value="2">2张</option>
+                    <option value="4">4张</option>
+                </select>
+            </div>
+        </div>
+
+        <button id="generateBtn" onclick="generateImage()">🚀 生成图片</button>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p style="margin-top: 15px; color: #667eea;">
+                <strong>正在生成图片...</strong><br>
+                <span style="font-size: 14px;">这可能需要 10-30 秒，请耐心等待</span>
+            </p>
+        </div>
+
+        <div class="error" id="error"></div>
+
+        <div class="result" id="result"></div>
+    </div>
+
+    <script>
+        let currentMode = 'text'; // 'text' or 'image'
+        let uploadedImages = [];  // 存储所有图片：[{base64, isPrimary}, ...]
+
+        function switchMode(mode) {
+            currentMode = mode;
+            const buttons = document.querySelectorAll('.mode-btn');
+            buttons.forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+
+            const uploadSection = document.getElementById('uploadSection');
+            if (mode === 'image') {
+                uploadSection.classList.add('active');
+            } else {
+                uploadSection.classList.remove('active');
+            }
+        }
+
+        // 处理多图上传
+        function handleImageUpload(event) {
+            const files = event.target.files;
+            if (!files.length) return;
+
+            for (let file of files) {
+                if (!file.type.startsWith('image/')) {
+                    showError('请上传图片文件');
+                    continue;
+                }
+
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    uploadedImages.push({
+                        base64: e.target.result,
+                        isPrimary: uploadedImages.length === 0  // 第一张为主图
+                    });
+                    updatePreviewGrid();
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        // 拖拽支持
+        const dropZone = document.getElementById('dropZone');
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('drag-over');
+        });
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('drag-over');
+        });
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('drag-over');
+
+            const files = e.dataTransfer.files;
+            for (let file of files) {
+                if (!file.type.startsWith('image/')) continue;
+
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    uploadedImages.push({
+                        base64: ev.target.result,
+                        isPrimary: uploadedImages.length === 0
+                    });
+                    updatePreviewGrid();
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // 更新预览网格
+        function updatePreviewGrid() {
+            const grid = document.getElementById('previewGrid');
+            grid.innerHTML = '';
+
+            uploadedImages.forEach((img, index) => {
+                const item = document.createElement('div');
+                item.className = `preview-item ${img.isPrimary ? 'primary' : 'secondary'}`;
+                item.onclick = () => setPrimaryImage(index);
+
+                item.innerHTML = `
+                    <img src="${img.base64}" alt="预览 ${index + 1}">
+                    <span class="image-badge ${img.isPrimary ? 'badge-primary' : 'badge-secondary'}">
+                        ${img.isPrimary ? '主' : '辅'}
+                    </span>
+                    <button class="remove-btn" onclick="event.stopPropagation(); removeImage(${index})">×</button>
+                `;
+
+                grid.appendChild(item);
+            });
+        }
+
+        // 设置主图
+        function setPrimaryImage(index) {
+            uploadedImages.forEach(img => img.isPrimary = false);
+            uploadedImages[index].isPrimary = true;
+            updatePreviewGrid();
+        }
+
+        // 删除图片
+        function removeImage(index) {
+            const wasPrimary = uploadedImages[index].isPrimary;
+            uploadedImages.splice(index, 1);
+
+            // 如果删除的是主图，自动设置第一张为主图
+            if (wasPrimary && uploadedImages.length > 0) {
+                uploadedImages[0].isPrimary = true;
+            }
+
+            updatePreviewGrid();
+        }
+
+        async function generateImage() {
+            const prompt = document.getElementById('prompt').value.trim();
+            const apiEndpoint = document.getElementById('apiEndpoint').value.trim();
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const aspectRatio = document.getElementById('aspectRatio').value;
+            const quality = document.getElementById('quality').value;
+            const count = parseInt(document.getElementById('count').value);
+
+            // 验证输入
+            if (!prompt) {
+                showError('请输入图片描述');
+                return;
+            }
+
+            if (!apiEndpoint) {
+                showError('请输入API端点地址');
+                return;
+            }
+
+            if (!apiKey) {
+                showError('请输入API密钥');
+                return;
+            }
+
+            // 图+文模式验证
+            if (currentMode === 'image' && uploadedImages.length === 0) {
+                showError('图+文生图模式需要上传至少一张参考图片');
+                return;
+            }
+
+            // 构建模型名称
+            const model = `gemini-3-pro-image-${aspectRatio}-${quality}`;
+
+            // 构建消息内容
+            let messageContent;
+            if (currentMode === 'image' && uploadedImages.length > 0) {
+                // 多图模式：按主次顺序排列
+                const primary = uploadedImages.find(img => img.isPrimary);
+                const secondaries = uploadedImages.filter(img => !img.isPrimary);
+
+                messageContent = [];
+
+                // 主参考图在前
+                if (primary) {
+                    messageContent.push({
+                        type: 'image_url',
+                        image_url: { url: primary.base64 }
+                    });
+                }
+
+                // 辅助参考图
+                secondaries.forEach(img => {
+                    messageContent.push({
+                        type: 'image_url',
+                        image_url: { url: img.base64 }
+                    });
+                });
+
+                // 文本提示词
+                messageContent.push({
+                    type: 'text',
+                    text: `主参考图：请重点参考第一张图片的风格和构图。辅助参考图：${secondaries.length}张。\n\n用户描述：${prompt}`
+                });
+            } else {
+                // 纯文生图模式
+                messageContent = prompt;
+            }
+
+            // 显示加载状态
+            document.getElementById('generateBtn').disabled = true;
+            document.getElementById('loading').classList.add('active');
+            document.getElementById('error').classList.remove('active');
+            document.getElementById('result').classList.remove('active');
+            document.getElementById('result').innerHTML = ''; // 清空之前的结果
+
+            let successCount = 0;
+            let failedCount = 0;
+            const failedIndexes = [];
+
+            try {
+                // 并行生成：创建所有请求的Promise数组
+                updateLoadingText(`正在并行生成 ${count} 张图片...`);
+
+                const generatePromises = Array.from({ length: count }, (_, index) => {
+                    const i = index + 1;
+
+                    return fetch(apiEndpoint, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`
+                        },
+                        body: JSON.stringify({
+                            model: model,
+                            messages: [
+                                {
+                                    role: 'user',
+                                    content: messageContent
+                                }
+                            ],
+                            n: 1  // 每次只生成1张
+                        })
+                    })
+                    .then(async response => {
+                        if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(errorData.error?.message || `HTTP ${response.status}: ${response.statusText}`);
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        // 成功：显示结果
+                        displaySingleResult(data, i);
+                        successCount++;
+
+                        // 返回数据用于调试信息
+                        return { success: true, data, index: i };
+                    })
+                    .catch(error => {
+                        // 失败：记录并显示错误
+                        failedCount++;
+                        failedIndexes.push(i);
+
+                        // 在结果区域显示失败信息
+                        const resultDiv = document.getElementById('result');
+                        const errorContainer = document.createElement('div');
+                        errorContainer.style.marginBottom = '20px';
+                        errorContainer.style.padding = '15px';
+                        errorContainer.style.background = '#fee';
+                        errorContainer.style.color = '#c33';
+                        errorContainer.style.borderRadius = '8px';
+                        errorContainer.innerHTML = `❌ 第 ${i} 张图片生成失败，请检查网络连接后重试`;
+                        resultDiv.appendChild(errorContainer);
+                        resultDiv.classList.add('active');
+
+                        return { success: false, error, index: i };
+                    });
+                });
+
+                // 等待所有请求完成
+                const results = await Promise.all(generatePromises);
+
+                // 所有请求完成后的总结
+                if (successCount > 0) {
+                    const resultDiv = document.getElementById('result');
+                    const successMsg = document.createElement('div');
+                    successMsg.className = 'success-message';
+                    successMsg.innerHTML = `✅ 成功生成 ${successCount} 张图片！点击下方按钮即可下载。`;
+                    resultDiv.insertBefore(successMsg, resultDiv.firstChild);
+                }
+
+                if (failedCount > 0) {
+                    showError(`生成完成：成功 ${successCount} 张，失败 ${failedCount} 张`);
+                }
+
+            } catch (error) {
+                showError(`生成失败: ${error.message}`);
+            } finally {
+                document.getElementById('generateBtn').disabled = false;
+                document.getElementById('loading').classList.remove('active');
+            }
+        }
+
+        // 更新加载文本的辅助函数
+        function updateLoadingText(text) {
+            const loadingDiv = document.getElementById('loading');
+            const textElement = loadingDiv.querySelector('p');
+            if (textElement) {
+                textElement.textContent = text;
+            }
+        }
+
+        // 显示单张图片结果（追加模式）
+        function displaySingleResult(data, imageIndex) {
+            const resultDiv = document.getElementById('result');
+            let imageFound = false;
+
+            try {
+                // 格式1: OpenAI标准格式 - choices[].message.content
+                if (data.choices && data.choices.length > 0) {
+                    data.choices.forEach((choice) => {
+                        let imageData = null;
+
+                        if (choice.message?.content) {
+                            const content = choice.message.content;
+                            const markdownMatch = content.match(/!\[.*?\]\((data:image\/[^;]+;base64,[^)]+)\)/);
+                            if (markdownMatch) {
+                                imageData = markdownMatch[1];
+                            } else if (content.startsWith('data:image')) {
+                                imageData = content;
+                            } else {
+                                imageData = content;
+                            }
+                        } else if (choice.message?.image_url) {
+                            imageData = choice.message.image_url;
+                        } else if (choice.image_url) {
+                            imageData = choice.image_url;
+                        } else if (choice.url) {
+                            imageData = choice.url;
+                        }
+
+                        if (imageData) {
+                            createImageElement(imageData, imageIndex, resultDiv);
+                            imageFound = true;
+                        }
+                    });
+                }
+
+                // 格式2: 直接返回图片数组 - data[]
+                if (!imageFound && data.data && Array.isArray(data.data)) {
+                    data.data.forEach((item) => {
+                        const imageData = item.url || item.b64_json || item.image;
+                        if (imageData) {
+                            createImageElement(imageData, imageIndex, resultDiv);
+                            imageFound = true;
+                        }
+                    });
+                }
+
+                // 格式3: 直接在根级别 - url或b64_json
+                if (!imageFound && (data.url || data.b64_json || data.image)) {
+                    createImageElement(data.url || data.b64_json || data.image, imageIndex, resultDiv);
+                    imageFound = true;
+                }
+
+                if (imageFound) {
+                    resultDiv.classList.add('active');
+                }
+
+            } catch (error) {
+                console.error(`解析第 ${imageIndex} 张图片数据失败:`, error);
+            }
+        }
+
+        function displayResults(data, count) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '';
+
+            let imageFound = false;
+
+            // 支持多种API响应格式
+            try {
+                // 格式1: OpenAI标准格式 - choices[].message.content
+                if (data.choices && data.choices.length > 0) {
+                    data.choices.forEach((choice, index) => {
+                        let imageData = null;
+
+                        // 优先检查content字段（可能是Markdown格式）
+                        if (choice.message?.content) {
+                            const content = choice.message.content;
+
+                            // 检查是否是Markdown图片格式: ![image](data:image/jpeg;base64,...)
+                            const markdownMatch = content.match(/!\[.*?\]\((data:image\/[^;]+;base64,[^)]+)\)/);
+                            if (markdownMatch) {
+                                imageData = markdownMatch[1]; // 提取括号中的base64数据
+                            } else if (content.startsWith('data:image')) {
+                                // 直接是base64数据
+                                imageData = content;
+                            } else {
+                                imageData = content;
+                            }
+                        } else if (choice.message?.image_url) {
+                            imageData = choice.message.image_url;
+                        } else if (choice.image_url) {
+                            imageData = choice.image_url;
+                        } else if (choice.url) {
+                            imageData = choice.url;
+                        }
+
+                        if (imageData) {
+                            createImageElement(imageData, index + 1, resultDiv);
+                            imageFound = true;
+                        }
+                    });
+                }
+
+                // 格式2: 直接返回图片数组 - data[]
+                if (!imageFound && data.data && Array.isArray(data.data)) {
+                    data.data.forEach((item, index) => {
+                        const imageData = item.url || item.b64_json || item.image;
+                        if (imageData) {
+                            createImageElement(imageData, index + 1, resultDiv);
+                            imageFound = true;
+                        }
+                    });
+                }
+
+                // 格式3: 直接在根级别 - url或b64_json
+                if (!imageFound && (data.url || data.b64_json || data.image)) {
+                    createImageElement(data.url || data.b64_json || data.image, 1, resultDiv);
+                    imageFound = true;
+                }
+
+                if (imageFound) {
+                    resultDiv.classList.add('active');
+                } else {
+                    // 显示友好的警告提示（黄色样式）
+                    const errorDiv = document.getElementById('error');
+                    errorDiv.innerHTML = `
+                        <strong style="font-size: 18px;">⚠️ API返回了文本内容而非图片</strong>
+                        <br><br>
+                        <div style="line-height: 1.8;">
+                            这可能是因为：<br>
+                            • 模型配置不正确<br>
+                            • API返回了错误信息或说明文字<br>
+                            • 提示词不够明确<br>
+                            <br>
+                            请查看下方调试信息了解详情
+                        </div>
+                    `;
+                    errorDiv.style.background = '#fff3cd';
+                    errorDiv.style.color = '#856404';
+                    errorDiv.style.borderLeft = '4px solid #ffc107';
+                    errorDiv.classList.add('active');
+
+                    // 自动展开调试信息面板
+                    document.getElementById('debug').classList.add('active');
+                }
+
+            } catch (error) {
+                showError(`解析图片数据失败: ${error.message}`);
+            }
+        }
+
+        function createImageElement(imageData, index, container) {
+            const imgContainer = document.createElement('div');
+            imgContainer.style.marginBottom = '20px';
+
+            // 检测是否为URL图片（渐进式加载路径）
+            const isUrlImage = imageData.startsWith('/images/');
+            let currentQuality = 'preview'; // 默认加载预览质量
+            let originalImageData = imageData;
+
+            if (isUrlImage) {
+                // URL模式：实施渐进式加载
+                const imageId = imageData; // 保存原始路径
+
+                // 创建质量切换按钮组
+                const qualityToggle = document.createElement('div');
+                qualityToggle.className = 'quality-toggle';
+                qualityToggle.innerHTML = `
+                    <button class="quality-btn" data-quality="thumbnail">缩略图</button>
+                    <button class="quality-btn active" data-quality="preview">预览图</button>
+                    <button class="quality-btn" data-quality="original">原图</button>
+                `;
+                imgContainer.appendChild(qualityToggle);
+
+                // 创建图片加载容器
+                const imageLoader = document.createElement('div');
+                imageLoader.className = 'image-loader';
+                imageLoader.style.minHeight = '300px';
+
+                const img = document.createElement('img');
+                img.alt = `生成的图片 ${index}`;
+                img.loading = 'lazy'; // 启用懒加载
+                img.style.maxWidth = '100%';
+
+                // 加载状态覆盖层
+                const loadingOverlay = document.createElement('div');
+                loadingOverlay.className = 'loading-overlay';
+                loadingOverlay.innerHTML = `
+                    <div class="mini-spinner"></div>
+                    <div class="load-status">加载中...</div>
+                `;
+
+                imageLoader.appendChild(img);
+                imageLoader.appendChild(loadingOverlay);
+                imgContainer.appendChild(imageLoader);
+
+                // 图片加载函数
+                const loadImageQuality = (quality) => {
+                    loadingOverlay.classList.remove('hidden');
+                    img.classList.remove('loaded');
+
+                    // 解析当前imageId并重构URL为路径段格式
+                    // 期望格式: /images/:timestamp/:quality/:filename
+                    let qualityUrl;
+                    try {
+                        const urlParts = imageId.split('/').filter(p => p);
+                        // urlParts: ['images', '20250203_143052', 'preview', 'image_0.png']
+                        if (urlParts.length >= 4 && urlParts[0] === 'images') {
+                            const timestamp = urlParts[1];
+                            const filename = urlParts[3];
+                            qualityUrl = `/images/${timestamp}/${quality}/${filename}`;
+                        } else {
+                            // 降级方案：使用查询参数
+                            qualityUrl = `${imageId}?quality=${quality}`;
+                        }
+                    } catch (e) {
+                        // 错误处理：使用查询参数作为降级方案
+                        qualityUrl = `${imageId}?quality=${quality}`;
+                    }
+
+                    // 创建新图片对象预加载
+                    const tempImg = new Image();
+                    tempImg.onload = () => {
+                        img.src = qualityUrl;
+                        img.classList.add('loaded');
+                        loadingOverlay.classList.add('hidden');
+                        currentQuality = quality;
+
+                        // 更新质量指示器
+                        const indicator = imgContainer.querySelector('.quality-indicator');
+                        if (indicator) {
+                            const qualityNames = {
+                                'thumbnail': '缩略图',
+                                'preview': '预览图',
+                                'original': '原图'
+                            };
+                            indicator.textContent = `当前: ${qualityNames[quality]}`;
+                        }
+                    };
+
+                    tempImg.onerror = () => {
+                        loadingOverlay.innerHTML = `
+                            <div class="error-overlay">
+                                <p style="color: #c33; font-weight: bold;">❌ 加载失败</p>
+                                <button class="retry-btn" onclick="this.closest('.image-loader').dispatchEvent(new CustomEvent('retry'))">
+                                    🔄 重试
+                                </button>
+                            </div>
+                        `;
+                    };
+
+                    tempImg.src = qualityUrl;
+                };
+
+                // 质量切换事件
+                qualityToggle.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('quality-btn')) {
+                        const quality = e.target.dataset.quality;
+
+                        // 更新按钮状态
+                        qualityToggle.querySelectorAll('.quality-btn').forEach(btn => {
+                            btn.classList.remove('active');
+                        });
+                        e.target.classList.add('active');
+
+                        // 加载对应质量
+                        loadImageQuality(quality);
+                    }
+                });
+
+                // 重试事件
+                imageLoader.addEventListener('retry', () => {
+                    loadImageQuality(currentQuality);
+                });
+
+                // 初始加载预览图
+                loadImageQuality('preview');
+
+                // 添加质量指示器
+                const qualityIndicator = document.createElement('span');
+                qualityIndicator.className = 'quality-indicator';
+                qualityIndicator.textContent = '当前: 预览图';
+                imgContainer.appendChild(qualityIndicator);
+
+                // 下载按钮（使用原图质量）
+                const actionsDiv = document.createElement('div');
+                actionsDiv.className = 'image-actions';
+
+                const downloadBtn = document.createElement('button');
+                downloadBtn.className = 'download-btn';
+                downloadBtn.textContent = `📥 下载原图 ${index}`;
+                downloadBtn.onclick = async () => {
+                    downloadBtn.textContent = '⏳ 下载中...';
+                    downloadBtn.disabled = true;
+
+                    try {
+                        // 构建原图下载URL
+                        const urlParts = imageId.split('/').filter(p => p);
+                        let downloadUrl;
+
+                        if (urlParts.length >= 4 && urlParts[0] === 'images') {
+                            const timestamp = urlParts[1];
+                            const filename = urlParts[3];
+                            downloadUrl = `/images/${timestamp}/original/${filename}`;
+                        } else {
+                            downloadUrl = `${imageId}?quality=original`;
+                        }
+
+                        const response = await fetch(downloadUrl);
+                        const blob = await response.blob();
+                        const url = URL.createObjectURL(blob);
+                        downloadImage(url, `ai-generated-${index}-${Date.now()}.png`);
+                        setTimeout(() => URL.revokeObjectURL(url), 1000);
+                        downloadBtn.textContent = `✅ 下载完成`;
+                        setTimeout(() => {
+                            downloadBtn.textContent = `📥 下载原图 ${index}`;
+                            downloadBtn.disabled = false;
+                        }, 2000);
+                    } catch (error) {
+                        downloadBtn.textContent = `❌ 下载失败`;
+                        setTimeout(() => {
+                            downloadBtn.textContent = `📥 下载原图 ${index}`;
+                            downloadBtn.disabled = false;
+                        }, 2000);
+                    }
+                };
+
+                actionsDiv.appendChild(downloadBtn);
+                imgContainer.appendChild(actionsDiv);
+
+            } else {
+                // Base64模式：保持原有逻辑（向后兼容）
+                const img = document.createElement('img');
+
+                try {
+                    let blobUrl;
+
+                    if (imageData.startsWith('data:image')) {
+                        const base64String = imageData.split(',')[1];
+                        const binaryString = atob(base64String);
+                        const bytes = new Uint8Array(binaryString.length);
+                        for (let i = 0; i < binaryString.length; i++) {
+                            bytes[i] = binaryString.charCodeAt(i);
+                        }
+
+                        const mimeType = imageData.match(/data:(image\/\w+);/)[1] || 'image/png';
+                        const blob = new Blob([bytes], { type: mimeType });
+                        blobUrl = URL.createObjectURL(blob);
+                        img.src = blobUrl;
+
+                        img.onload = () => {
+                            img.classList.add('loaded');
+                        };
+                    } else if (!imageData.startsWith('http')) {
+                        const binaryString = atob(imageData);
+                        const bytes = new Uint8Array(binaryString.length);
+                        for (let i = 0; i < binaryString.length; i++) {
+                            bytes[i] = binaryString.charCodeAt(i);
+                        }
+                        const blob = new Blob([bytes], { type: 'image/png' });
+                        blobUrl = URL.createObjectURL(blob);
+                        img.src = blobUrl;
+
+                        img.onload = () => {
+                            img.classList.add('loaded');
+                        };
+                    } else {
+                        img.src = imageData;
+                        img.onload = () => {
+                            img.classList.add('loaded');
+                        };
+                    }
+                } catch (error) {
+                    img.src = imageData.startsWith('data:image') ? imageData : `data:image/png;base64,${imageData}`;
+                }
+
+                img.onerror = () => {
+                    imgContainer.innerHTML = `<p style="color: #c33;">图片 ${index} 加载失败，请重试</p>`;
+                };
+
+                img.alt = `生成的图片 ${index}`;
+                img.style.maxWidth = '100%';
+                imgContainer.appendChild(img);
+
+                // 添加下载按钮
+                const actionsDiv = document.createElement('div');
+                actionsDiv.className = 'image-actions';
+
+                const downloadBtn = document.createElement('button');
+                downloadBtn.className = 'download-btn';
+                downloadBtn.textContent = `📥 下载图片 ${index}`;
+
+                downloadBtn.onclick = () => {
+                    const finalImageData = originalImageData.startsWith('data:image')
+                        ? originalImageData
+                        : `data:image/png;base64,${originalImageData}`;
+                    downloadImage(finalImageData, `ai-generated-${index}-${Date.now()}.png`);
+                };
+
+                actionsDiv.appendChild(downloadBtn);
+                imgContainer.appendChild(actionsDiv);
+            }
+
+            container.appendChild(imgContainer);
+        }
+
+        function downloadImage(imageUrl, filename) {
+            const link = document.createElement('a');
+            link.href = imageUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function toggleDebug() {
+            const debug = document.getElementById('debug');
+            if (debug.style.display === 'none' || !debug.classList.contains('active')) {
+                debug.classList.add('active');
+            } else {
+                debug.classList.remove('active');
+            }
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.classList.add('active');
+        }
+
+        // 回车键生成
+        document.getElementById('prompt').addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 'Enter') {
+                generateImage();
+            }
+        });
+
+        // AI润色功能
+        let enhancedPromptText = '';
+
+        const ENHANCE_SYSTEM_PROMPT = `你是一个专业的AI绘图提示词优化专家。用户会给你一段图片描述，请将其优化为更适合AI绘图的提示词。
+
+要求：
+1. 保持用户原意，但增加细节描述（光影、材质、氛围、构图等）
+2. 使用具体、生动的形容词
+3. 适当添加艺术风格或摄影术语
+4. 输出纯文本，不要解释，不要加引号
+5. 控制在200字以内
+6. 使用中文输出`;
+
+        async function enhancePrompt() {
+            const prompt = document.getElementById('prompt').value.trim();
+            const apiBase = document.getElementById('enhanceApiBase').value.trim().replace(/\/+$/, '');
+            const apiKey = document.getElementById('enhanceApiKey').value.trim();
+            const model = document.getElementById('enhanceModel').value.trim();
+
+            const errorDiv = document.getElementById('enhanceError');
+            const previewDiv = document.getElementById('enhancePreview');
+            const btn = document.getElementById('enhanceBtn');
+
+            errorDiv.classList.remove('active');
+            previewDiv.classList.remove('active');
+
+            if (!prompt) {
+                errorDiv.textContent = '请先输入图片描述';
+                errorDiv.classList.add('active');
+                return;
+            }
+            if (!apiBase || !apiKey || !model) {
+                errorDiv.textContent = '请在"AI润色设置"中配置API';
+                errorDiv.classList.add('active');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = '⏳ 润色中...';
+
+            try {
+                const response = await fetch(`${apiBase}/chat/completions`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`
+                    },
+                    body: JSON.stringify({
+                        model: model,
+                        messages: [
+                            { role: 'system', content: ENHANCE_SYSTEM_PROMPT },
+                            { role: 'user', content: prompt }
+                        ],
+                        stream: false
+                    })
+                });
+
+                if (!response.ok) {
+                    const errData = await response.json().catch(() => ({}));
+                    throw new Error(errData.error?.message || `HTTP ${response.status}`);
+                }
+
+                const data = await response.json();
+                enhancedPromptText = data.choices?.[0]?.message?.content?.trim() || '';
+
+                if (!enhancedPromptText) {
+                    throw new Error('API返回内容为空');
+                }
+
+                previewDiv.innerHTML = `
+                    <div class="enhance-preview-text">${escapeHtml(enhancedPromptText)}</div>
+                    <div class="enhance-preview-actions">
+                        <button class="apply-btn" onclick="applyEnhancedPrompt()">✅ 应用</button>
+                        <button class="cancel-btn" onclick="cancelEnhancedPrompt()">❌ 取消</button>
+                    </div>
+                `;
+                previewDiv.classList.add('active');
+
+            } catch (error) {
+                errorDiv.textContent = `润色失败: ${error.message}`;
+                errorDiv.classList.add('active');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '✨ AI润色';
+            }
+        }
+
+        function applyEnhancedPrompt() {
+            if (enhancedPromptText) {
+                document.getElementById('prompt').value = enhancedPromptText;
+            }
+            document.getElementById('enhancePreview').classList.remove('active');
+            enhancedPromptText = '';
+        }
+
+        function cancelEnhancedPrompt() {
+            document.getElementById('enhancePreview').classList.remove('active');
+            enhancedPromptText = '';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
