@@ -484,9 +484,48 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    // 只处理根路径请求
+    // 处理HTML页面请求
     if (req.url === '/' || req.url === '/index.html') {
         const filePath = path.join(__dirname, 'text-to-image.html');
+
+        fs.readFile(filePath, (err, data) => {
+            if (err) {
+                res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+                res.end('服务器错误');
+                return;
+            }
+
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(data);
+        });
+    } else if (req.url === '/history.html' || req.url === '/history') {
+        const filePath = path.join(__dirname, 'history.html');
+
+        fs.readFile(filePath, (err, data) => {
+            if (err) {
+                res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+                res.end('服务器错误');
+                return;
+            }
+
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(data);
+        });
+    } else if (req.url === '/text-to-image.html') {
+        const filePath = path.join(__dirname, 'text-to-image.html');
+
+        fs.readFile(filePath, (err, data) => {
+            if (err) {
+                res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+                res.end('服务器错误');
+                return;
+            }
+
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(data);
+        });
+    } else if (req.url === '/chat.html') {
+        const filePath = path.join(__dirname, 'chat.html');
 
         fs.readFile(filePath, (err, data) => {
             if (err) {
