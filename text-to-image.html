@@ -580,7 +580,7 @@
             <summary>⚙️ 高级设置（点击展开）</summary>
             <div class="input-group">
                 <label>API端点</label>
-                <input type="text" id="apiEndpoint" placeholder="/api/generate" value="/api/generate">
+                <input type="text" id="apiEndpoint" placeholder="/api/images/generate" value="/api/images/generate">
             </div>
             <div class="input-group">
                 <label>API密钥（可选）</label>
@@ -592,11 +592,11 @@
             <summary>✨ AI润色设置（点击展开）</summary>
             <div class="input-group">
                 <label>Chat API Base URL</label>
-                <input type="text" id="enhanceApiBase" placeholder="https://api.openai.com/v1" value="http://localhost:8045/v1">
+                <input type="text" id="enhanceApiBase" placeholder="https://api.openai.com/v1" value="http://localhost:58045/v1">
             </div>
             <div class="input-group">
                 <label>API密钥</label>
-                <input type="text" id="enhanceApiKey" placeholder="sk-...">
+                <input type="text" id="enhanceApiKey" placeholder="sk-..." value="sk-default">
             </div>
             <div class="input-group">
                 <label>模型名称</label>
@@ -802,42 +802,33 @@
                 return;
             }
 
-            // 构建模型名称
-            const model = `gemini-3-pro-image-${aspectRatio}-${quality}`;
+            // OpenAI Images API 格式
+            const model = `gemini-3-pro-image`;
 
-            // 构建消息内容
-            let messageContent;
+            // 转换为显式参数
+            const sizeMap = {
+                '1-1': '1024x1024',
+                '16-9': '1920x1080',
+                '9-16': '1080x1920',
+                '4-3': '1280x960',
+                '3-4': '960x1280',
+                '21-9': '2560x1080'
+            };
+            const size = sizeMap[aspectRatio] || '1920x1080';
+
+            const qualityMap = {
+                '2k': 'medium',
+                '4k': 'hd'
+            };
+            const apiQuality = qualityMap[quality] || 'hd';
+
+            // 构建提示词
+            let finalPrompt = prompt;
             if (currentMode === 'image' && uploadedImages.length > 0) {
-                // 多图模式：按主次顺序排列
+                // 图+文模式：提示词说明参考图
                 const primary = uploadedImages.find(img => img.isPrimary);
                 const secondaries = uploadedImages.filter(img => !img.isPrimary);
-
-                messageContent = [];
-
-                // 主参考图在前
-                if (primary) {
-                    messageContent.push({
-                        type: 'image_url',
-                        image_url: { url: primary.base64 }
-                    });
-                }
-
-                // 辅助参考图
-                secondaries.forEach(img => {
-                    messageContent.push({
-                        type: 'image_url',
-                        image_url: { url: img.base64 }
-                    });
-                });
-
-                // 文本提示词
-                messageContent.push({
-                    type: 'text',
-                    text: `主参考图：请重点参考第一张图片的风格和构图。辅助参考图：${secondaries.length}张。\n\n用户描述：${prompt}`
-                });
-            } else {
-                // 纯文生图模式
-                messageContent = prompt;
+                finalPrompt = `参考图片风格和构图（${uploadedImages.length}张）。\n\n用户描述：${prompt}`;
             }
 
             // 显示加载状态
@@ -866,13 +857,11 @@
                         },
                         body: JSON.stringify({
                             model: model,
-                            messages: [
-                                {
-                                    role: 'user',
-                                    content: messageContent
-                                }
-                            ],
-                            n: 1  // 每次只生成1张
+                            prompt: finalPrompt,
+                            size: size,
+                            quality: apiQuality,
+                            n: 1,
+                            response_format: 'b64_json'
                         })
                     })
                     .then(async response => {
@@ -944,33 +933,28 @@
             }
         }
 
-        // 显示单张图片结果（追加模式）
+        // 显示单张图片结果（追加模式）- OpenAI Images API 格式
         function displaySingleResult(data, imageIndex) {
             const resultDiv = document.getElementById('result');
             let imageFound = false;
 
             try {
-                // 格式1: OpenAI标准格式 - choices[].message.content
-                if (data.choices && data.choices.length > 0) {
-                    data.choices.forEach((choice) => {
+                console.log(`解析第 ${imageIndex} 张图片:`, data);
+
+                // OpenAI Images API 格式: data[]
+                if (data.data && Array.isArray(data.data)) {
+                    data.data.forEach((item) => {
                         let imageData = null;
 
-                        if (choice.message?.content) {
-                            const content = choice.message.content;
-                            const markdownMatch = content.match(/!\[.*?\]\((data:image\/[^;]+;base64,[^)]+)\)/);
-                            if (markdownMatch) {
-                                imageData = markdownMatch[1];
-                            } else if (content.startsWith('data:image')) {
-                                imageData = content;
-                            } else {
-                                imageData = content;
-                            }
-                        } else if (choice.message?.image_url) {
-                            imageData = choice.message.image_url;
-                        } else if (choice.image_url) {
-                            imageData = choice.image_url;
-                        } else if (choice.url) {
-                            imageData = choice.url;
+                        // 优先使用 URL（服务器已转换）
+                        if (item.url) {
+                            imageData = item.url;
+                            console.log(`✅ 使用URL: ${imageData}`);
+                        }
+                        // 否则使用 b64_json
+                        else if (item.b64_json) {
+                            imageData = `data:image/png;base64,${item.b64_json}`;
+                            console.log(`✅ 使用Base64数据`);
                         }
 
                         if (imageData) {
@@ -978,27 +962,12 @@
                             imageFound = true;
                         }
                     });
-                }
-
-                // 格式2: 直接返回图片数组 - data[]
-                if (!imageFound && data.data && Array.isArray(data.data)) {
-                    data.data.forEach((item) => {
-                        const imageData = item.url || item.b64_json || item.image;
-                        if (imageData) {
-                            createImageElement(imageData, imageIndex, resultDiv);
-                            imageFound = true;
-                        }
-                    });
-                }
-
-                // 格式3: 直接在根级别 - url或b64_json
-                if (!imageFound && (data.url || data.b64_json || data.image)) {
-                    createImageElement(data.url || data.b64_json || data.image, imageIndex, resultDiv);
-                    imageFound = true;
                 }
 
                 if (imageFound) {
                     resultDiv.classList.add('active');
+                } else {
+                    console.error('未找到图片数据，完整响应:', data);
                 }
 
             } catch (error) {

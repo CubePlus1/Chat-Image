@@ -4,7 +4,7 @@ const path = require('path');
 const sharp = require('sharp');
 
 const PORT = 56780;
-const API_TARGET = 'http://127.0.0.1:8045'; // 本地AI API地址
+const API_TARGET = 'http://127.0.0.1:58045'; // 本地AI API地址
 
 // 数据存储目录
 const DATA_DIR = path.join(__dirname, 'data');
@@ -27,7 +27,7 @@ function initDirectories() {
 // 图片压缩配置
 const COMPRESSION_CONFIGS = {
     thumbnail: { width: 200, quality: 60 },
-    preview: { width: 800, quality: 70 },
+    preview: { width: 1920, quality: 85 },  // 提升预览图分辨率和质量
     original: null // 保持原样
 };
 
@@ -40,12 +40,16 @@ async function compressImage(inputBuffer, quality) {
             return inputBuffer;
         }
 
+        // 所有压缩图片都使用PNG格式（保持最佳质量）
         return await sharp(inputBuffer)
             .resize(config.width, null, {
                 fit: 'inside',
                 withoutEnlargement: true
             })
-            .jpeg({ quality: config.quality })
+            .png({
+                quality: config.quality,
+                compressionLevel: 6  // 0-9，6是平衡点
+            })
             .toBuffer();
     } catch (error) {
         console.error(`⚠️ 图片压缩失败 (${quality}):`, error.message);
@@ -104,6 +108,14 @@ async function saveGenerationData(prompt, base64Images, clientIP, parameters, ap
             const imageFilename = `image_${index}.png`;
             const imagePath = path.join(folderPath, imageFilename);
             const imageBuffer = Buffer.from(base64Data, 'base64');
+
+            // 🔍 调试：检查接收到的图片尺寸
+            try {
+                const metadata = await sharp(imageBuffer).metadata();
+                console.log(`📊 图片 ${index} 信息: ${metadata.width}x${metadata.height}, 格式: ${metadata.format}, 大小: ${(imageBuffer.length / 1024 / 1024).toFixed(2)}MB`);
+            } catch (err) {
+                console.error(`⚠️ 无法读取图片元数据:`, err.message);
+            }
 
             // 保存原图
             fs.writeFileSync(imagePath, imageBuffer);
@@ -330,9 +342,9 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    // API代理：转发到本地8045端口
-    if (req.url === '/api/generate' && req.method === 'POST') {
-        const startTime = Date.now(); // 记录请求开始时间
+    // Images API代理：转发到本地8045端口的 /v1/images/generations
+    if (req.url === '/api/images/generate' && req.method === 'POST') {
+        const startTime = Date.now();
         let body = '';
 
         req.on('data', chunk => {
@@ -352,18 +364,18 @@ const server = http.createServer((req, res) => {
                 return;
             }
 
-            // 提取提示词和参数
-            const messages = requestData.messages || [];
-            const userMessage = messages.find(m => m.role === 'user');
-            const prompt = userMessage?.content || '';
+            // 提取提示词和参数（Images API 格式）
+            const prompt = requestData.prompt || '';
             const parameters = {
                 model: requestData.model || 'unknown',
+                size: requestData.size || '1920x1080',
+                quality: requestData.quality || 'hd',
                 count: requestData.n || 1
             };
 
-            // 转发请求到本地API
+            // 转发请求到本地 Images API
             const apiReq = http.request(
-                `${API_TARGET}/v1/chat/completions`,
+                `${API_TARGET}/v1/images/generations`,
                 {
                     method: 'POST',
                     headers: {
@@ -374,63 +386,62 @@ const server = http.createServer((req, res) => {
                 (apiRes) => {
                     let responseBody = '';
 
-                    // 只缓冲数据，不写入响应
                     apiRes.on('data', chunk => {
                         responseBody += chunk.toString();
                     });
 
                     apiRes.on('end', async () => {
-                        const finalStatusCode = apiRes.statusCode; // 保存真实状态码
+                        const finalStatusCode = apiRes.statusCode;
 
-                        // 处理响应数据并替换base64为URL
+                        // 处理HTTP 429 Too Many Requests
+                        if (apiRes.statusCode === 429) {
+                            const retryAfter = apiRes.headers['retry-after'] || '60';
+                            const errorResponse = {
+                                error: {
+                                    type: 'rate_limit_error',
+                                    message: '请求频率过高，请稍后再试',
+                                    retry_after: parseInt(retryAfter),
+                                    details: `建议等待 ${retryAfter} 秒后重试`
+                                }
+                            };
+                            res.writeHead(429, {
+                                'Content-Type': 'application/json',
+                                'Access-Control-Allow-Origin': '*',
+                                'Retry-After': retryAfter
+                            });
+                            res.end(JSON.stringify(errorResponse));
+                            writeLog(req, res, startTime, 429);
+                            return;
+                        }
+
+                        // 处理响应数据并保存图片
                         if (apiRes.statusCode === 200) {
                             try {
                                 const responseData = JSON.parse(responseBody);
-                                const content = responseData.choices?.[0]?.message?.content;
 
-                                if (content) {
-                                    // 提取所有base64图片数据
-                                    const base64Regex = /data:image\/[^;]+;base64,([^\"]+)|base64:([A-Za-z0-9+/=]+)/g;
-                                    const base64Images = [];
-                                    let match;
-
-                                    while ((match = base64Regex.exec(content)) !== null) {
-                                        const base64Data = match[1] || match[2];
-                                        if (base64Data) {
-                                            base64Images.push(base64Data);
+                                // 提取 base64 图片数据（OpenAI Images API 格式）
+                                const base64Images = [];
+                                if (responseData.data && Array.isArray(responseData.data)) {
+                                    responseData.data.forEach(item => {
+                                        if (item.b64_json) {
+                                            base64Images.push(item.b64_json);
                                         }
-                                    }
+                                    });
+                                }
 
-                                    // 保存图片并获取URLs
-                                    if (base64Images.length > 0) {
-                                        const saveResult = await saveGenerationData(prompt, base64Images, clientIP, parameters, apiRes.statusCode);
+                                // 保存图片并获取URLs
+                                if (base64Images.length > 0) {
+                                    const saveResult = await saveGenerationData(prompt, base64Images, clientIP, parameters, apiRes.statusCode);
 
-                                        if (saveResult && saveResult.imageUrls) {
-                                            // 替换响应中的base64为URL
-                                            let modifiedContent = content;
-                                            const base64Matches = [];
-
-                                            // 重新匹配以获取完整的base64字符串
-                                            const fullBase64Regex = /data:image\/[^;]+;base64,[^\"]+/g;
-                                            let fullMatch;
-                                            while ((fullMatch = fullBase64Regex.exec(content)) !== null) {
-                                                base64Matches.push(fullMatch[0]);
+                                    if (saveResult && saveResult.imageUrls) {
+                                        // 替换响应中的 b64_json 为 URL
+                                        responseData.data.forEach((item, index) => {
+                                            if (index < saveResult.imageUrls.length) {
+                                                delete item.b64_json; // 删除大的 base64 数据
+                                                item.url = saveResult.imageUrls[index];
                                             }
-
-                                            // 替换每个base64为对应的URL
-                                            base64Matches.forEach((base64String, index) => {
-                                                if (index < saveResult.imageUrls.length) {
-                                                    modifiedContent = modifiedContent.replace(
-                                                        base64String,
-                                                        saveResult.imageUrls[index]
-                                                    );
-                                                }
-                                            });
-
-                                            // 更新响应内容
-                                            responseData.choices[0].message.content = modifiedContent;
-                                            responseBody = JSON.stringify(responseData);
-                                        }
+                                        });
+                                        responseBody = JSON.stringify(responseData);
                                     }
                                 }
                             } catch (error) {
@@ -438,14 +449,12 @@ const server = http.createServer((req, res) => {
                             }
                         }
 
-                        // 一次性写入响应头和修改后的响应体
+                        // 写入响应
                         res.writeHead(finalStatusCode, {
                             'Content-Type': 'application/json',
                             'Access-Control-Allow-Origin': '*'
                         });
                         res.end(responseBody);
-
-                        // 记录日志（使用真实的API响应状态码）
                         writeLog(req, res, startTime, finalStatusCode);
                     });
                 }
@@ -499,6 +508,5 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`\n🚀 服务器已启动！`);
     console.log(`📍 本地访问: http://localhost:${PORT}`);
     console.log(`📍 局域网访问: http://127.0.0.1:${PORT}`);
-    console.log(`📍 内网穿透: 使用你的穿透域名:${PORT}`);
     console.log(`\n按 Ctrl+C 停止服务器\n`);
 });
