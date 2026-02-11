@@ -77,15 +77,11 @@ async function generateCompressedImages(folderPath, filename, imageBuffer) {
     await Promise.all(tasks);
 }
 
-// 生成时间戳文件夹名（格式：20250203_143052）
+// 生成时间戳文件夹名（格式：20250203_143052_123，含毫秒避免并行请求冲突）
 function getTimestampFolder() {
     const now = new Date();
-    return now.toISOString()
-        .replace(/T/, '_')
-        .replace(/\..+/, '')
-        .replace(/:/g, '')
-        .replace(/_/g, '_')
-        .substring(0, 15); // 20250203_143052
+    const pad = (n, len = 2) => String(n).padStart(len, '0');
+    return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}_${pad(now.getMilliseconds(), 3)}`;
 }
 
 // 保存单次生成的所有数据到时间戳文件夹（返回文件夹名和图片URLs）
@@ -99,37 +95,54 @@ async function saveGenerationData(prompt, base64Images, clientIP, parameters, ap
             fs.mkdirSync(folderPath, { recursive: true });
         }
 
-        const generatedImages = [];
-        const imageUrls = [];
+        // 从所有图片中选出分辨率最大的那张，只保存它
+        let bestBuffer = null;
+        let bestResolution = 0;
+        let bestIndex = 0;
 
-        // 保存所有图片并生成压缩版本
         for (let index = 0; index < base64Images.length; index++) {
             const base64Data = base64Images[index];
-            const imageFilename = `image_${index}.png`;
-            const imagePath = path.join(folderPath, imageFilename);
             const imageBuffer = Buffer.from(base64Data, 'base64');
 
-            // 🔍 调试：检查接收到的图片尺寸
             try {
-                const metadata = await sharp(imageBuffer).metadata();
-                console.log(`📊 图片 ${index} 信息: ${metadata.width}x${metadata.height}, 格式: ${metadata.format}, 大小: ${(imageBuffer.length / 1024 / 1024).toFixed(2)}MB`);
+                const meta = await sharp(imageBuffer).metadata();
+                const resolution = (meta.width || 0) * (meta.height || 0);
+                console.log(`📊 图片 ${index} 信息: ${meta.width}x${meta.height}, 格式: ${meta.format}, 大小: ${(imageBuffer.length / 1024 / 1024).toFixed(2)}MB`);
+
+                if (resolution > bestResolution) {
+                    bestResolution = resolution;
+                    bestBuffer = imageBuffer;
+                    bestIndex = index;
+                }
             } catch (err) {
-                console.error(`⚠️ 无法读取图片元数据:`, err.message);
+                console.error(`⚠️ 无法读取图片 ${index} 元数据:`, err.message);
+                // 如果无法读取元数据，按文件大小兜底
+                if (!bestBuffer || imageBuffer.length > bestBuffer.length) {
+                    bestBuffer = imageBuffer;
+                    bestIndex = index;
+                }
             }
-
-            // 保存原图
-            fs.writeFileSync(imagePath, imageBuffer);
-            generatedImages.push(imageFilename);
-
-            // 生成图片URL
-            const imageUrl = `/images/${folderName}/preview/${imageFilename}`;
-            imageUrls.push(imageUrl);
-
-            // 异步生成压缩图片（不阻塞）
-            generateCompressedImages(folderPath, imageFilename, imageBuffer).catch(err => {
-                console.error(`⚠️ 压缩图片失败 ${imageFilename}:`, err.message);
-            });
         }
+
+        if (base64Images.length > 1) {
+            console.log(`🎯 选择图片 ${bestIndex} 作为最佳（共 ${base64Images.length} 张，丢弃其余）`);
+        }
+
+        const imageFilename = `image_0.png`;
+        const imagePath = path.join(folderPath, imageFilename);
+
+        // 保存最大的那张原图
+        fs.writeFileSync(imagePath, bestBuffer);
+        const generatedImages = [imageFilename];
+
+        // 生成图片URL
+        const imageUrl = `/images/${folderName}/preview/${imageFilename}`;
+        const imageUrls = [imageUrl];
+
+        // 异步生成压缩图片（不阻塞）
+        generateCompressedImages(folderPath, imageFilename, bestBuffer).catch(err => {
+            console.error(`⚠️ 压缩图片失败 ${imageFilename}:`, err.message);
+        });
 
         // 保存提示词
         const promptPath = path.join(folderPath, 'prompt.txt');
@@ -339,6 +352,156 @@ const server = http.createServer((req, res) => {
         });
         res.end(JSON.stringify(history));
         writeLog(req, res, startTime, 200);
+        return;
+    }
+
+    // Chat API代理：转发到本地8045端口的 /v1/chat/completions
+    if (req.url === '/api/generate' && req.method === 'POST') {
+        const startTime = Date.now();
+        let body = '';
+
+        req.on('data', chunk => {
+            body += chunk.toString();
+        });
+
+        req.on('end', () => {
+            const clientIP = getClientIP(req);
+            let requestData;
+
+            try {
+                requestData = JSON.parse(body);
+            } catch (error) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: '无效的请求数据' }));
+                writeLog(req, res, startTime, 400);
+                return;
+            }
+
+            // 提取提示词和参数（Chat API 格式）
+            const messages = requestData.messages || [];
+            const userMessage = messages.find(m => m.role === 'user');
+
+            // 从 content 中提取文本提示词
+            let prompt = '';
+            if (userMessage) {
+                if (typeof userMessage.content === 'string') {
+                    prompt = userMessage.content;
+                } else if (Array.isArray(userMessage.content)) {
+                    const textContent = userMessage.content.find(c => c.type === 'text');
+                    prompt = textContent?.text || '';
+                }
+            }
+
+            const parameters = {
+                model: requestData.model || 'unknown',
+                messageCount: messages.length
+            };
+
+            // 转发请求到本地 Chat API
+            const apiReq = http.request(
+                `${API_TARGET}/v1/chat/completions`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': req.headers['authorization'] || ''
+                    }
+                },
+                (apiRes) => {
+                    let responseBody = '';
+
+                    apiRes.on('data', chunk => {
+                        responseBody += chunk.toString();
+                    });
+
+                    apiRes.on('end', async () => {
+                        const finalStatusCode = apiRes.statusCode;
+
+                        // 处理HTTP 429 Too Many Requests
+                        if (apiRes.statusCode === 429) {
+                            const retryAfter = apiRes.headers['retry-after'] || '60';
+                            const errorResponse = {
+                                error: {
+                                    type: 'rate_limit_error',
+                                    message: '请求频率过高，请稍后再试',
+                                    retry_after: parseInt(retryAfter),
+                                    details: `建议等待 ${retryAfter} 秒后重试`
+                                }
+                            };
+                            res.writeHead(429, {
+                                'Content-Type': 'application/json',
+                                'Access-Control-Allow-Origin': '*',
+                                'Retry-After': retryAfter
+                            });
+                            res.end(JSON.stringify(errorResponse));
+                            writeLog(req, res, startTime, 429);
+                            return;
+                        }
+
+                        // 处理响应数据并保存图片
+                        if (apiRes.statusCode === 200) {
+                            try {
+                                const responseData = JSON.parse(responseBody);
+                                const content = responseData.choices?.[0]?.message?.content;
+
+                                if (content) {
+                                    // 提取所有base64图片数据
+                                    const base64Regex = /data:image\/[^;]+;base64,([^")\s]+)/g;
+                                    const base64Images = [];
+                                    let match;
+
+                                    while ((match = base64Regex.exec(content)) !== null) {
+                                        const base64Data = match[1];
+                                        if (base64Data) {
+                                            base64Images.push(base64Data);
+                                        }
+                                    }
+
+                                    // 保存图片并获取URLs
+                                    if (base64Images.length > 0) {
+                                        const saveResult = await saveGenerationData(prompt, base64Images, clientIP, parameters, apiRes.statusCode);
+
+                                        if (saveResult && saveResult.imageUrls) {
+                                            // 替换响应中所有base64为保存的最大图的URL
+                                            let modifiedContent = content;
+                                            const bestUrl = saveResult.imageUrls[0];
+
+                                            // 匹配所有完整的base64字符串
+                                            const fullBase64Regex = /data:image\/[^;]+;base64,[^")\s]+/g;
+                                            modifiedContent = modifiedContent.replace(fullBase64Regex, bestUrl);
+
+                                            // 更新响应内容
+                                            responseData.choices[0].message.content = modifiedContent;
+                                            responseBody = JSON.stringify(responseData);
+                                        }
+                                    }
+                                }
+                            } catch (error) {
+                                console.error('⚠️ 处理响应失败:', error);
+                            }
+                        }
+
+                        // 写入响应
+                        res.writeHead(finalStatusCode, {
+                            'Content-Type': 'application/json',
+                            'Access-Control-Allow-Origin': '*'
+                        });
+                        res.end(responseBody);
+                        writeLog(req, res, startTime, finalStatusCode);
+                    });
+                }
+            );
+
+            apiReq.on('error', (error) => {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: `API请求失败: ${error.message}` }));
+                writeLog(req, res, startTime, 500);
+            });
+
+            apiReq.write(body);
+            apiReq.end();
+        });
+
         return;
     }
 

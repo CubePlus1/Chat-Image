@@ -152,7 +152,7 @@ node server.js
 #### AI 润色配置（可选）
 - **API Base**：Chat API 地址（默认：`http://localhost:8045/v1`）
 - **API Key**：Chat API 密钥
-- **Model**：Chat 模型（默认：`gemini-2.5-flash`）
+- **Model**：Chat 模型（默认：`gemini-3-flash`）
 
 配置会自动保存到浏览器 LocalStorage。
 
