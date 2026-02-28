@@ -839,35 +839,32 @@
                     let fetchPromise;
 
                     if (isImageMode) {
-                        // 图+文模式：使用 Images Edit API（/api/images/edit），发送 FormData
+                        // 图+文模式：发送到 /api/images/edit，server 转为 Gemini 原生格式
                         const primary = uploadedImages.find(img => img.isPrimary);
                         const imageToSend = primary || uploadedImages[0];
 
-                        // 将 base64 转为 Blob
-                        const base64Data = imageToSend.base64.split(',')[1];
-                        const binaryString = atob(base64Data);
-                        const bytes = new Uint8Array(binaryString.length);
-                        for (let j = 0; j < binaryString.length; j++) {
-                            bytes[j] = binaryString.charCodeAt(j);
-                        }
-                        const imageBlob = new Blob([bytes], { type: 'image/png' });
+                        // 提取纯 base64 数据（不带 data:...;base64, 前缀）和 mime type
+                        const base64Parts = imageToSend.base64.split(',');
+                        const mimeMatch = base64Parts[0].match(/data:([^;]+);/);
+                        const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+                        const imageBase64 = base64Parts[1];
 
-                        const imageSizeMap = { 'standard': '1K', 'medium': '2K', 'hd': '4K' };
-
-                        const formData = new FormData();
-                        formData.append('image', imageBlob, 'image.png');
-                        formData.append('prompt', prompt);
-                        formData.append('model', 'gemini-3.1-flash-image');
-                        formData.append('size', size);
-                        formData.append('quality', quality);
-                        formData.append('imageSize', imageSizeMap[quality] || '4K');
+                        const chatBody = {
+                            prompt: prompt,
+                            imageBase64: imageBase64,
+                            mimeType: mimeType,
+                            model: 'gemini-3.1-flash-image',
+                            quality: quality,
+                            aspectRatio: aspectRatio
+                        };
 
                         fetchPromise = fetch('/api/images/edit', {
                             method: 'POST',
                             headers: {
+                                'Content-Type': 'application/json',
                                 'Authorization': `Bearer ${apiKey}`
                             },
-                            body: formData
+                            body: JSON.stringify(chatBody)
                         });
                     } else {
                         // 纯文生图模式：使用 Images API（/api/images/generate）

@@ -636,27 +636,76 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    // Images Edit API代理：转发到本地的 /v1/images/edits（图生图）
+    // 图生图API代理：通过 Gemini 原生 API 实现图生图（支持4K）
     if (req.url === '/api/images/edit' && req.method === 'POST') {
         const startTime = Date.now();
-        const chunks = [];
+        let body = '';
 
         req.on('data', chunk => {
-            chunks.push(chunk);
+            body += chunk.toString();
         });
 
         req.on('end', () => {
-            const rawBody = Buffer.concat(chunks);
             const clientIP = getClientIP(req);
+            let requestData;
 
-            // 转发请求到本地 Images Edits API（保持原始 content-type，含 boundary）
+            try {
+                requestData = JSON.parse(body);
+            } catch (error) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: '无效的请求数据' }));
+                writeLog(req, res, startTime, 400);
+                return;
+            }
+
+            const prompt = requestData.prompt || '';
+            const imageBase64 = requestData.imageBase64 || '';
+            const mimeType = requestData.mimeType || 'image/png';
+            const model = requestData.model || 'gemini-3.1-flash-image';
+
+            // 比例和质量映射
+            const aspectRatioMap = { '1-1': '1:1', '16-9': '16:9', '9-16': '9:16', '4-3': '4:3', '3-4': '3:4', '21-9': '21:9' };
+            const qualityMap = { 'standard': '1K', 'medium': '2K', 'hd': '4K' };
+            const imageSize = qualityMap[requestData.quality] || '4K';
+            const aspectRatio = aspectRatioMap[requestData.aspectRatio] || '16:9';
+
+            const parameters = {
+                model,
+                type: 'image-edit',
+                imageSize,
+                aspectRatio
+            };
+
+            // 构建 Gemini 原生 API 请求体
+            const geminiBody = JSON.stringify({
+                contents: [{
+                    role: 'user',
+                    parts: [
+                        { text: prompt },
+                        { inline_data: { mime_type: mimeType, data: imageBase64 } }
+                    ]
+                }],
+                generationConfig: {
+                    imageConfig: {
+                        imageSize: imageSize,
+                        aspectRatio: aspectRatio
+                    },
+                    responseModalities: ['TEXT', 'IMAGE']
+                }
+            });
+
+            const geminiBodyBuffer = Buffer.from(geminiBody);
+            console.log(`🖼️ 图生图请求(Gemini): prompt="${prompt.substring(0, 50)}", model=${model}, imageSize=${imageSize}, ratio=${aspectRatio}, body=${(geminiBodyBuffer.length / 1024 / 1024).toFixed(2)}MB`);
+
+            // 发送到 Gemini 原生 API
+            const apiUrl = `${API_TARGET}/v1beta/models/${model}:generateContent`;
             const apiReq = http.request(
-                `${API_TARGET}/v1/images/edits`,
+                apiUrl,
                 {
                     method: 'POST',
                     headers: {
-                        'Content-Type': req.headers['content-type'],
-                        'Content-Length': rawBody.length,
+                        'Content-Type': 'application/json',
+                        'Content-Length': geminiBodyBuffer.length,
                         'Authorization': req.headers['authorization'] || ''
                     }
                 },
@@ -672,55 +721,77 @@ const server = http.createServer((req, res) => {
 
                         if (apiRes.statusCode === 429) {
                             const retryAfter = apiRes.headers['retry-after'] || '60';
-                            const errorResponse = {
-                                error: {
-                                    type: 'rate_limit_error',
-                                    message: '请求频率过高，请稍后再试',
-                                    retry_after: parseInt(retryAfter),
-                                    details: `建议等待 ${retryAfter} 秒后重试`
-                                }
-                            };
                             res.writeHead(429, {
                                 'Content-Type': 'application/json',
                                 'Access-Control-Allow-Origin': '*',
                                 'Retry-After': retryAfter
                             });
-                            res.end(JSON.stringify(errorResponse));
+                            res.end(JSON.stringify({
+                                error: { type: 'rate_limit_error', message: '请求频率过高，请稍后再试', retry_after: parseInt(retryAfter) }
+                            }));
                             writeLog(req, res, startTime, 429);
                             return;
                         }
 
-                        // 处理响应数据并保存图片
                         if (apiRes.statusCode === 200) {
                             try {
                                 const responseData = JSON.parse(responseBody);
-                                const base64Images = [];
-                                if (responseData.data && Array.isArray(responseData.data)) {
-                                    responseData.data.forEach(item => {
-                                        if (item.b64_json) {
-                                            base64Images.push(item.b64_json);
-                                        }
+
+                                // 调试：打印 Gemini 响应结构（截断 base64）
+                                const debugData = JSON.parse(JSON.stringify(responseData));
+                                try {
+                                    (debugData.candidates || []).forEach(c => {
+                                        (c.content?.parts || []).forEach(p => {
+                                            if (p.inline_data?.data) p.inline_data.data = p.inline_data.data.substring(0, 50) + '...[TRUNCATED]';
+                                            if (p.inlineData?.data) p.inlineData.data = p.inlineData.data.substring(0, 50) + '...[TRUNCATED]';
+                                        });
                                     });
+                                } catch(e) {}
+                                console.log('📦 Gemini 响应结构:', JSON.stringify(debugData, null, 2).substring(0, 2000));
+
+                                // Gemini 原生响应格式: candidates[].content.parts[]
+                                const base64Images = [];
+                                const candidates = responseData.candidates || [];
+                                for (const candidate of candidates) {
+                                    const parts = candidate.content?.parts || [];
+                                    for (const part of parts) {
+                                        // 支持 inline_data 和 inlineData 两种命名
+                                        const inlineData = part.inline_data || part.inlineData;
+                                        if (inlineData && inlineData.data) {
+                                            base64Images.push(inlineData.data);
+                                        }
+                                    }
                                 }
 
+                                console.log(`🖼️ Gemini 返回 ${base64Images.length} 张图片`);
+
                                 if (base64Images.length > 0) {
-                                    const saveResult = await saveGenerationData('image-edit', base64Images, clientIP, { model: 'gemini-3.1-flash-image', type: 'edit' }, apiRes.statusCode);
+                                    const saveResult = await saveGenerationData(prompt, base64Images, clientIP, parameters, apiRes.statusCode);
 
                                     if (saveResult && saveResult.imageUrls) {
-                                        responseData.data.forEach((item, index) => {
-                                            if (index < saveResult.imageUrls.length) {
-                                                delete item.b64_json;
-                                                item.url = saveResult.imageUrls[index];
-                                            }
+                                        // 转换为前端 displaySingleResult 能识别的 Chat API 格式
+                                        const chatResponse = {
+                                            choices: [{
+                                                message: {
+                                                    content: saveResult.imageUrls[0]
+                                                }
+                                            }]
+                                        };
+                                        res.writeHead(200, {
+                                            'Content-Type': 'application/json',
+                                            'Access-Control-Allow-Origin': '*'
                                         });
-                                        responseBody = JSON.stringify(responseData);
+                                        res.end(JSON.stringify(chatResponse));
+                                        writeLog(req, res, startTime, 200);
+                                        return;
                                     }
                                 }
                             } catch (error) {
-                                console.error('⚠️ 处理响应失败:', error);
+                                console.error('⚠️ 处理Gemini响应失败:', error);
                             }
                         }
 
+                        // 非200或处理失败，原样返回
                         res.writeHead(finalStatusCode, {
                             'Content-Type': 'application/json',
                             'Access-Control-Allow-Origin': '*'
@@ -737,7 +808,7 @@ const server = http.createServer((req, res) => {
                 writeLog(req, res, startTime, 500);
             });
 
-            apiReq.write(rawBody);
+            apiReq.write(geminiBodyBuffer);
             apiReq.end();
         });
 
