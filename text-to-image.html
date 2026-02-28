@@ -630,8 +630,9 @@
             <div class="input-group">
                 <label>图片质量</label>
                 <select id="quality">
-                    <option value="2k">2K</option>
-                    <option value="4k" selected>4K</option>
+                    <option value="standard">标准</option>
+                    <option value="medium">2K</option>
+                    <option value="hd" selected>4K</option>
                 </select>
             </div>
 
@@ -802,54 +803,20 @@
                 return;
             }
 
-            // Map aspect ratio select values to API model format
-            // API format: gemini-3-pro-image-{quality}-{WxH}
-            const aspectRatioMap = {
-                '1-1': '1x1',
-                '16-9': '16x9',
-                '9-16': '9x16',
-                '4-3': '4x3',
-                '3-4': '3x4',
-                '21-9': '21x9'
+            // Map aspect ratio to size (WIDTHxHEIGHT) for Images API
+            const sizeMap = {
+                '1-1': '1024x1024',
+                '16-9': '1920x1080',
+                '9-16': '1080x1920',
+                '4-3': '1024x768',
+                '3-4': '768x1024',
+                '21-9': '2520x1080'
             };
 
-            const ratioSuffix = aspectRatioMap[aspectRatio] || aspectRatio.replace('-', 'x');
-            const fullModel = `gemini-3-pro-image-${quality}-${ratioSuffix}`;
+            const size = sizeMap[aspectRatio] || '1920x1080';
 
-            // 构建消息内容（图+文模式）
-            let messageContent;
-            if (currentMode === 'image' && uploadedImages.length > 0) {
-                // 多图模式：按主次顺序排列
-                const primary = uploadedImages.find(img => img.isPrimary);
-                const secondaries = uploadedImages.filter(img => !img.isPrimary);
-
-                messageContent = [];
-
-                // 主参考图在前
-                if (primary) {
-                    messageContent.push({
-                        type: 'image_url',
-                        image_url: { url: primary.base64 }
-                    });
-                }
-
-                // 辅助参考图
-                secondaries.forEach(img => {
-                    messageContent.push({
-                        type: 'image_url',
-                        image_url: { url: img.base64 }
-                    });
-                });
-
-                // 文本提示词
-                messageContent.push({
-                    type: 'text',
-                    text: `same character, ${prompt}`
-                });
-            } else {
-                // 纯文生图模式
-                messageContent = prompt;
-            }
+            // 判断是否为图+文模式
+            const isImageMode = currentMode === 'image' && uploadedImages.length > 0;
 
             // 显示加载状态
             document.getElementById('generateBtn').disabled = true;
@@ -869,20 +836,59 @@
                 const generatePromises = Array.from({ length: count }, (_, index) => {
                     const i = index + 1;
 
-                    return fetch(apiEndpoint, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${apiKey}`
-                        },
-                        body: JSON.stringify({
-                            model: fullModel,  // 使用完整模型名（如 gemini-3-pro-image-9-16-4k）
-                            messages: [{
-                                role: 'user',
-                                content: messageContent
-                            }]
-                        })
-                    })
+                    let fetchPromise;
+
+                    if (isImageMode) {
+                        // 图+文模式：使用 Images Edit API（/api/images/edit），发送 FormData
+                        const primary = uploadedImages.find(img => img.isPrimary);
+                        const imageToSend = primary || uploadedImages[0];
+
+                        // 将 base64 转为 Blob
+                        const base64Data = imageToSend.base64.split(',')[1];
+                        const binaryString = atob(base64Data);
+                        const bytes = new Uint8Array(binaryString.length);
+                        for (let j = 0; j < binaryString.length; j++) {
+                            bytes[j] = binaryString.charCodeAt(j);
+                        }
+                        const imageBlob = new Blob([bytes], { type: 'image/png' });
+
+                        const imageSizeMap = { 'standard': '1K', 'medium': '2K', 'hd': '4K' };
+
+                        const formData = new FormData();
+                        formData.append('image', imageBlob, 'image.png');
+                        formData.append('prompt', prompt);
+                        formData.append('model', 'gemini-3.1-flash-image');
+                        formData.append('size', size);
+                        formData.append('quality', quality);
+                        formData.append('imageSize', imageSizeMap[quality] || '4K');
+
+                        fetchPromise = fetch('/api/images/edit', {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${apiKey}`
+                            },
+                            body: formData
+                        });
+                    } else {
+                        // 纯文生图模式：使用 Images API（/api/images/generate）
+                        fetchPromise = fetch('/api/images/generate', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${apiKey}`
+                            },
+                            body: JSON.stringify({
+                                model: 'gemini-3.1-flash-image',
+                                prompt: prompt,
+                                size: size,
+                                quality: quality,
+                                n: 1,
+                                response_format: 'b64_json'
+                            })
+                        });
+                    }
+
+                    return fetchPromise
                     .then(async response => {
                         if (!response.ok) {
                             const errorData = await response.json();
@@ -960,8 +966,19 @@
             try {
                 console.log(`📦 解析第 ${imageIndex} 张图片响应:`, data);
 
+                // Images API 格式: data[].url 或 data[].b64_json
+                if (data.data && Array.isArray(data.data)) {
+                    data.data.forEach(item => {
+                        const imageData = item.url || item.b64_json;
+                        if (imageData) {
+                            createImageElement(imageData, imageIndex, resultDiv);
+                            imageFound = true;
+                        }
+                    });
+                }
+
                 // Chat API 格式: choices[].message.content
-                if (data.choices && data.choices.length > 0) {
+                if (!imageFound && data.choices && data.choices.length > 0) {
                     const content = data.choices[0].message.content;
                     console.log(`📏 响应内容长度: ${content.length.toLocaleString()} 字符`);
                     console.log(`📝 响应内容前500字符:`, content.substring(0, 500));

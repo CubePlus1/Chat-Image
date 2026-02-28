@@ -135,8 +135,8 @@ async function saveGenerationData(prompt, base64Images, clientIP, parameters, ap
         fs.writeFileSync(imagePath, bestBuffer);
         const generatedImages = [imageFilename];
 
-        // 生成图片URL
-        const imageUrl = `/images/${folderName}/preview/${imageFilename}`;
+        // 生成图片URL（返回原图，保留4K分辨率）
+        const imageUrl = `/images/${folderName}/original/${imageFilename}`;
         const imageUrls = [imageUrl];
 
         // 异步生成压缩图片（不阻塞）
@@ -630,6 +630,114 @@ const server = http.createServer((req, res) => {
             });
 
             apiReq.write(body);
+            apiReq.end();
+        });
+
+        return;
+    }
+
+    // Images Edit API代理：转发到本地的 /v1/images/edits（图生图）
+    if (req.url === '/api/images/edit' && req.method === 'POST') {
+        const startTime = Date.now();
+        const chunks = [];
+
+        req.on('data', chunk => {
+            chunks.push(chunk);
+        });
+
+        req.on('end', () => {
+            const rawBody = Buffer.concat(chunks);
+            const clientIP = getClientIP(req);
+
+            // 转发请求到本地 Images Edits API（保持原始 content-type，含 boundary）
+            const apiReq = http.request(
+                `${API_TARGET}/v1/images/edits`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': req.headers['content-type'],
+                        'Content-Length': rawBody.length,
+                        'Authorization': req.headers['authorization'] || ''
+                    }
+                },
+                (apiRes) => {
+                    let responseBody = '';
+
+                    apiRes.on('data', chunk => {
+                        responseBody += chunk.toString();
+                    });
+
+                    apiRes.on('end', async () => {
+                        const finalStatusCode = apiRes.statusCode;
+
+                        if (apiRes.statusCode === 429) {
+                            const retryAfter = apiRes.headers['retry-after'] || '60';
+                            const errorResponse = {
+                                error: {
+                                    type: 'rate_limit_error',
+                                    message: '请求频率过高，请稍后再试',
+                                    retry_after: parseInt(retryAfter),
+                                    details: `建议等待 ${retryAfter} 秒后重试`
+                                }
+                            };
+                            res.writeHead(429, {
+                                'Content-Type': 'application/json',
+                                'Access-Control-Allow-Origin': '*',
+                                'Retry-After': retryAfter
+                            });
+                            res.end(JSON.stringify(errorResponse));
+                            writeLog(req, res, startTime, 429);
+                            return;
+                        }
+
+                        // 处理响应数据并保存图片
+                        if (apiRes.statusCode === 200) {
+                            try {
+                                const responseData = JSON.parse(responseBody);
+                                const base64Images = [];
+                                if (responseData.data && Array.isArray(responseData.data)) {
+                                    responseData.data.forEach(item => {
+                                        if (item.b64_json) {
+                                            base64Images.push(item.b64_json);
+                                        }
+                                    });
+                                }
+
+                                if (base64Images.length > 0) {
+                                    const saveResult = await saveGenerationData('image-edit', base64Images, clientIP, { model: 'gemini-3.1-flash-image', type: 'edit' }, apiRes.statusCode);
+
+                                    if (saveResult && saveResult.imageUrls) {
+                                        responseData.data.forEach((item, index) => {
+                                            if (index < saveResult.imageUrls.length) {
+                                                delete item.b64_json;
+                                                item.url = saveResult.imageUrls[index];
+                                            }
+                                        });
+                                        responseBody = JSON.stringify(responseData);
+                                    }
+                                }
+                            } catch (error) {
+                                console.error('⚠️ 处理响应失败:', error);
+                            }
+                        }
+
+                        res.writeHead(finalStatusCode, {
+                            'Content-Type': 'application/json',
+                            'Access-Control-Allow-Origin': '*'
+                        });
+                        res.end(responseBody);
+                        writeLog(req, res, startTime, finalStatusCode);
+                    });
+                }
+            );
+
+            apiReq.on('error', (error) => {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: `API请求失败: ${error.message}` }));
+                writeLog(req, res, startTime, 500);
+            });
+
+            apiReq.write(rawBody);
             apiReq.end();
         });
 
