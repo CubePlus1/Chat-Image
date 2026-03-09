@@ -2,9 +2,10 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
+const config = require('./config');
 
-const PORT = 56780;
-const API_TARGET = 'http://127.0.0.1:58045'; // 本地AI API地址
+const PORT       = config.PORT;
+const API_TARGET = config.API_TARGET; // 后端代理目标地址
 
 // 数据存储目录
 const DATA_DIR = path.join(__dirname, 'data');
@@ -755,58 +756,36 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    // 处理HTML页面请求
-    if (req.url === '/' || req.url === '/index.html') {
-        const filePath = path.join(__dirname, 'text-to-image.html');
+    // 处理HTML页面请求（统一注入 config.js 配置到前端占位符）
+    const HTML_ROUTES = {
+        '/':                  'text-to-image.html',
+        '/index.html':        'text-to-image.html',
+        '/text-to-image.html':'text-to-image.html',
+        '/history.html':      'history.html',
+        '/history':           'history.html',
+        '/chat.html':         'chat.html',
+    };
 
-        fs.readFile(filePath, (err, data) => {
+    const htmlFile = HTML_ROUTES[req.url];
+    if (htmlFile) {
+        const filePath = path.join(__dirname, htmlFile);
+
+        fs.readFile(filePath, 'utf8', (err, html) => {
             if (err) {
                 res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
                 res.end('服务器错误');
                 return;
             }
 
-            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-            res.end(data);
-        });
-    } else if (req.url === '/history.html' || req.url === '/history') {
-        const filePath = path.join(__dirname, 'history.html');
-
-        fs.readFile(filePath, (err, data) => {
-            if (err) {
-                res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-                res.end('服务器错误');
-                return;
-            }
+            // 将 config.js 中的值注入到 HTML 的 value="" 占位符
+            html = html
+                .replace(/(<input[^>]+id="apiKey"[^>]+value=")[^"]*(")/,   `$1${config.DEFAULT_API_KEY}$2`)
+                .replace(/(<input[^>]+id="apiBase"[^>]+value=")[^"]*(")/,  `$1${config.ENHANCE_API_BASE}$2`)
+                .replace(/(<input[^>]+id="enhanceApiBase"[^>]+value=")[^"]*(")/,`$1${config.ENHANCE_API_BASE}$2`)
+                .replace(/(<input[^>]+id="enhanceApiKey"[^>]+value=")[^"]*(")/,  `$1${config.ENHANCE_API_KEY}$2`);
 
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-            res.end(data);
-        });
-    } else if (req.url === '/text-to-image.html') {
-        const filePath = path.join(__dirname, 'text-to-image.html');
-
-        fs.readFile(filePath, (err, data) => {
-            if (err) {
-                res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-                res.end('服务器错误');
-                return;
-            }
-
-            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-            res.end(data);
-        });
-    } else if (req.url === '/chat.html') {
-        const filePath = path.join(__dirname, 'chat.html');
-
-        fs.readFile(filePath, (err, data) => {
-            if (err) {
-                res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-                res.end('服务器错误');
-                return;
-            }
-
-            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-            res.end(data);
+            res.end(html);
         });
     } else {
         res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
