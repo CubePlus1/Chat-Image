@@ -1,7 +1,0 @@
-Upstream error 400 Bad Request: {
-  "error": {
-    "code": 400,
-    "message": "Unable to process input image. Please retry or report in https://developers.generativeai.google/guide/troubleshooting",
-    "status": "INVALID_ARGUMENT"
-  }
-}

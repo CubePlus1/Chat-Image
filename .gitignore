@@ -1,3 +1,6 @@
+# Private config (use config.example.js as template)
+config.js
+
 # Dependencies
 node_modules/
 
