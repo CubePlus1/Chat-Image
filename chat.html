@@ -40,14 +40,6 @@
 
 <div class="container">
   <div class="config-panel">
-    <div style="flex: 2;">
-      <label>API Base URL</label>
-      <input id="apiBase" value="http://localhost:58045/v1" placeholder="https://api.openai.com/v1" />
-    </div>
-    <div style="flex: 2;">
-      <label>API Key</label>
-      <input id="apiKey" type="password" placeholder="sk-..." />
-    </div>
     <div style="flex: 1;">
       <label>模型 (Model)</label>
       <select id="model" style="padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px;">
@@ -93,7 +85,18 @@
   const btnSend = $("btnSend");
   const btnStop = $("btnStop");
   const logEl = $("log");
-  
+
+  // 从服务端读取配置
+  let _apiBase = '';
+  let _apiKey  = '';
+  fetch('/api/config')
+    .then(r => r.json())
+    .then(cfg => {
+      _apiBase = cfg.enhanceApiBase || '';
+      _apiKey  = cfg.enhanceApiKey  || '';
+    })
+    .catch(() => {});
+
   let messages = [];
   let abortController = null;
 
@@ -126,12 +129,12 @@
     const text = userInput.value.trim();
     if (!text || btnSend.disabled) return;
 
-    const apiBase = $("apiBase").value.trim().replace(/\/+$/, "");
-    const apiKey = $("apiKey").value.trim();
-    const model = $("model").value.trim();
+    const apiBase = _apiBase.replace(/\/+$/, "");
+    const apiKey  = _apiKey;
+    const model   = $("model").value.trim();
 
     if (!apiKey) {
-      $("err").textContent = "请设置 API Key";
+      $("err").textContent = "API Key 未配置，请检查服务端 config.js";
       return;
     }
     $("err").textContent = "";
