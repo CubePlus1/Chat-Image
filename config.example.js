@@ -18,8 +18,9 @@ module.exports = {
     // 图像生成页 主 API Base URL
     DEFAULT_API_BASE: 'http://localhost:56780',
 
-    // 图像增强 / Chat 功能使用的直连 API（可填第三方兼容地址）
-    ENHANCE_API_BASE: 'https://api.openai.com/v1',
-    ENHANCE_API_KEY:  'sk-xxxxxxxxxxxxxxxx',
+    // AI润色 / Chat 功能使用的直连 API（可填第三方兼容地址）
+    ENHANCE_API_BASE:  'https://api.openai.com/v1',
+    ENHANCE_API_KEY:   'sk-xxxxxxxxxxxxxxxx',
+    ENHANCE_API_MODEL: 'gpt-4o-mini',
 
 };
