@@ -576,34 +576,6 @@
             <div class="preview-grid" id="previewGrid"></div>
         </div>
 
-        <details class="api-config">
-            <summary>⚙️ 高级设置（点击展开）</summary>
-            <div class="input-group">
-                <label>API端点</label>
-                <input type="text" id="apiEndpoint" placeholder="/api/generate" value="/api/generate">
-            </div>
-            <div class="input-group">
-                <label>API密钥（可选）</label>
-                <input type="text" id="apiKey" placeholder="sk-... 或留空" value="sk-default">
-            </div>
-        </details>
-
-        <details class="api-config">
-            <summary>✨ AI润色设置（点击展开）</summary>
-            <div class="input-group">
-                <label>Chat API Base URL</label>
-                <input type="text" id="enhanceApiBase" placeholder="https://api.openai.com/v1" value="http://localhost:58045/v1">
-            </div>
-            <div class="input-group">
-                <label>API密钥</label>
-                <input type="text" id="enhanceApiKey" placeholder="sk-..." value="sk-default">
-            </div>
-            <div class="input-group">
-                <label>模型名称</label>
-                <input type="text" id="enhanceModel" placeholder="gpt-4o-mini" value="gemini-3-flash">
-            </div>
-        </details>
-
         <div class="input-group">
             <label>图片描述</label>
             <div class="prompt-row">
@@ -662,6 +634,13 @@
     </div>
 
     <script>
+        // 从服务端读取配置
+        let _cfg = {};
+        fetch('/api/config')
+            .then(r => r.json())
+            .then(cfg => { _cfg = cfg; })
+            .catch(() => {});
+
         let currentMode = 'text'; // 'text' or 'image'
         let uploadedImages = [];  // 存储所有图片：[{base64, isPrimary}, ...]
 
@@ -775,8 +754,6 @@
 
         async function generateImage() {
             const prompt = document.getElementById('prompt').value.trim();
-            const apiEndpoint = document.getElementById('apiEndpoint').value.trim();
-            const apiKey = document.getElementById('apiKey').value.trim();
             const aspectRatio = document.getElementById('aspectRatio').value;
             const quality = document.getElementById('quality').value;
             const count = parseInt(document.getElementById('count').value);
@@ -784,16 +761,6 @@
             // 验证输入
             if (!prompt) {
                 showError('请输入图片描述');
-                return;
-            }
-
-            if (!apiEndpoint) {
-                showError('请输入API端点地址');
-                return;
-            }
-
-            if (!apiKey) {
-                showError('请输入API密钥');
                 return;
             }
 
@@ -864,19 +831,13 @@
 
                         fetchPromise = fetch('/api/images/edit', {
                             method: 'POST',
-                            headers: {
-                                'Authorization': `Bearer ${apiKey}`
-                            },
                             body: formData
                         });
                     } else {
                         // 纯文生图模式：使用 Images API（/api/images/generate）
                         fetchPromise = fetch('/api/images/generate', {
                             method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${apiKey}`
-                            },
+                            headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
                                 model: 'gemini-3.1-flash-image',
                                 prompt: prompt,
@@ -1520,9 +1481,9 @@
 
         async function enhancePrompt() {
             const prompt = document.getElementById('prompt').value.trim();
-            const apiBase = document.getElementById('enhanceApiBase').value.trim().replace(/\/+$/, '');
-            const apiKey = document.getElementById('enhanceApiKey').value.trim();
-            const model = document.getElementById('enhanceModel').value.trim();
+            const apiBase = (_cfg.enhanceApiBase || '').replace(/\/+$/, '');
+            const apiKey  = _cfg.enhanceApiKey   || '';
+            const model   = _cfg.enhanceApiModel || '';
 
             const errorDiv = document.getElementById('enhanceError');
             const previewDiv = document.getElementById('enhancePreview');
@@ -1537,7 +1498,7 @@
                 return;
             }
             if (!apiBase || !apiKey || !model) {
-                errorDiv.textContent = '请在"AI润色设置"中配置API';
+                errorDiv.textContent = 'AI润色未配置，请检查服务端 config.js';
                 errorDiv.classList.add('active');
                 return;
             }
