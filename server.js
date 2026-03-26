@@ -356,6 +356,24 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    // 公共配置API: GET /api/config（前端读取默认值用）
+    if (req.url === '/api/config' && req.method === 'GET') {
+        const startTime = Date.now();
+        res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+        });
+        res.end(JSON.stringify({
+            defaultApiKey:   config.DEFAULT_API_KEY,
+            defaultApiBase:  config.DEFAULT_API_BASE,
+            enhanceApiBase:  config.ENHANCE_API_BASE,
+            enhanceApiKey:   config.ENHANCE_API_KEY,
+            enhanceApiModel: config.ENHANCE_API_MODEL,
+        }));
+        writeLog(req, res, startTime, 200);
+        return;
+    }
+
     // Chat API代理：转发到本地8045端口的 /v1/chat/completions
     if (req.url === '/api/generate' && req.method === 'POST') {
         const startTime = Date.now();
@@ -405,7 +423,7 @@ const server = http.createServer((req, res) => {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': req.headers['authorization'] || ''
+                        'Authorization': `Bearer ${config.DEFAULT_API_KEY}`
                     }
                 },
                 (apiRes) => {
@@ -443,38 +461,41 @@ const server = http.createServer((req, res) => {
                         if (apiRes.statusCode === 200) {
                             try {
                                 const responseData = JSON.parse(responseBody);
-                                const content = responseData.choices?.[0]?.message?.content;
+                                const message = responseData.choices?.[0]?.message;
+                                const content = message?.content;
 
+                                const base64Images = [];
+
+                                // 方式1：content 字符串里内嵌 data:image/...;base64,...
                                 if (content) {
-                                    // 提取所有base64图片数据
                                     const base64Regex = /data:image\/[^;]+;base64,([^")\s]+)/g;
-                                    const base64Images = [];
                                     let match;
-
                                     while ((match = base64Regex.exec(content)) !== null) {
-                                        const base64Data = match[1];
-                                        if (base64Data) {
-                                            base64Images.push(base64Data);
-                                        }
+                                        if (match[1]) base64Images.push(match[1]);
                                     }
+                                }
 
-                                    // 保存图片并获取URLs
-                                    if (base64Images.length > 0) {
-                                        const saveResult = await saveGenerationData(prompt, base64Images, clientIP, parameters, apiRes.statusCode);
+                                // 方式2：message.images[] 非标准字段（gemini-3.1-flash-image 实际返回格式）
+                                if (base64Images.length === 0 && Array.isArray(message?.images)) {
+                                    for (const img of message.images) {
+                                        const url = img?.image_url?.url || '';
+                                        const m = url.match(/^data:image\/[^;]+;base64,(.+)$/);
+                                        if (m) base64Images.push(m[1]);
+                                    }
+                                }
 
-                                        if (saveResult && saveResult.imageUrls) {
-                                            // 替换响应中所有base64为保存的最大图的URL
-                                            let modifiedContent = content;
-                                            const bestUrl = saveResult.imageUrls[0];
+                                // 保存图片并获取URLs
+                                if (base64Images.length > 0) {
+                                    const saveResult = await saveGenerationData(prompt, base64Images, clientIP, parameters, apiRes.statusCode);
 
-                                            // 匹配所有完整的base64字符串
-                                            const fullBase64Regex = /data:image\/[^;]+;base64,[^")\s]+/g;
-                                            modifiedContent = modifiedContent.replace(fullBase64Regex, bestUrl);
+                                    if (saveResult && saveResult.imageUrls) {
+                                        const bestUrl = saveResult.imageUrls[0];
 
-                                            // 更新响应内容
-                                            responseData.choices[0].message.content = modifiedContent;
-                                            responseBody = JSON.stringify(responseData);
-                                        }
+                                        // 把图片URL写入 content，前端统一从 content 读取
+                                        const existingText = (typeof content === 'string' ? content : '').replace(/data:image\/[^;]+;base64,[^")\s]+/g, '').trim();
+                                        responseData.choices[0].message.content = existingText ? `${existingText}\n${bestUrl}` : bestUrl;
+                                        delete responseData.choices[0].message.images; // 移除非标字段
+                                        responseBody = JSON.stringify(responseData);
                                     }
                                 }
                             } catch (error) {
@@ -506,14 +527,12 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    // Images API代理：转发到本地8045端口的 /v1/images/generations
+    // Images API代理：转发到 chat/completions（后端不支持 images/generations）
     if (req.url === '/api/images/generate' && req.method === 'POST') {
         const startTime = Date.now();
         let body = '';
 
-        req.on('data', chunk => {
-            body += chunk.toString();
-        });
+        req.on('data', chunk => { body += chunk.toString(); });
 
         req.on('end', () => {
             const clientIP = getClientIP(req);
@@ -528,84 +547,118 @@ const server = http.createServer((req, res) => {
                 return;
             }
 
-            // 提取提示词和参数（Images API 格式）
             const prompt = requestData.prompt || '';
+            const model  = requestData.model  || 'gemini-3.1-flash-image';
+
+            // quality → Gemini imageSize 映射（参考图生图逻辑）
+            const qualityMap = { 'standard': '1K', 'medium': '2K', 'hd': '4K' };
+            const imageSize = qualityMap[requestData.quality] || '4K';
+
+            // size → aspectRatio 映射
+            const sizeToRatio = {
+                '1920x1080': '16:9', '2560x1440': '16:9', '1280x720': '16:9',
+                '1080x1920': '9:16', '1024x1024': '1:1', '1:1': '1:1',
+                '4:3': '4:3', '3:4': '3:4', '21:9': '21:9'
+            };
+            const sizeStr = requestData.size || '1920x1080';
+            const aspectRatio = sizeToRatio[sizeStr] || '16:9';
+
             const parameters = {
-                model: requestData.model || 'unknown',
-                size: requestData.size || '1920x1080',
+                model,
+                size: sizeStr,
+                imageSize,
+                aspectRatio,
                 quality: requestData.quality || 'hd',
                 count: requestData.n || 1
             };
 
-            // 转发请求到本地 Images API
+            // 构建 Gemini 原生 generateContent 请求体
+            const geminiBody = JSON.stringify({
+                contents: [{
+                    role: 'user',
+                    parts: [{ text: prompt }]
+                }],
+                generationConfig: {
+                    imageConfig: {
+                        imageSize: imageSize,
+                        aspectRatio: aspectRatio
+                    },
+                    responseModalities: ['TEXT', 'IMAGE']
+                }
+            });
+
+            const geminiBodyBuffer = Buffer.from(geminiBody);
+            console.log(`🖼️ 文生图请求(Gemini): prompt="${prompt.substring(0, 50)}", model=${model}, imageSize=${imageSize}, ratio=${aspectRatio}`);
+
+            const apiUrl = `${API_TARGET}/v1beta/models/${model}:generateContent`;
             const apiReq = http.request(
-                `${API_TARGET}/v1/images/generations`,
+                apiUrl,
                 {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': req.headers['authorization'] || ''
+                        'Content-Length': geminiBodyBuffer.length,
+                        'Authorization': `Bearer ${config.DEFAULT_API_KEY}`
                     }
                 },
                 (apiRes) => {
                     let responseBody = '';
-
-                    apiRes.on('data', chunk => {
-                        responseBody += chunk.toString();
-                    });
+                    apiRes.on('data', chunk => { responseBody += chunk.toString(); });
 
                     apiRes.on('end', async () => {
-                        const finalStatusCode = apiRes.statusCode;
-
-                        // 处理HTTP 429 Too Many Requests
                         if (apiRes.statusCode === 429) {
                             const retryAfter = apiRes.headers['retry-after'] || '60';
-                            const errorResponse = {
-                                error: {
-                                    type: 'rate_limit_error',
-                                    message: '请求频率过高，请稍后再试',
-                                    retry_after: parseInt(retryAfter),
-                                    details: `建议等待 ${retryAfter} 秒后重试`
-                                }
-                            };
                             res.writeHead(429, {
                                 'Content-Type': 'application/json',
                                 'Access-Control-Allow-Origin': '*',
                                 'Retry-After': retryAfter
                             });
-                            res.end(JSON.stringify(errorResponse));
+                            res.end(JSON.stringify({ error: { type: 'rate_limit_error', message: '请求频率过高，请稍后再试', retry_after: parseInt(retryAfter) } }));
                             writeLog(req, res, startTime, 429);
                             return;
                         }
 
-                        // 处理响应数据并保存图片
+                        let finalStatusCode = apiRes.statusCode;
+
                         if (apiRes.statusCode === 200) {
                             try {
                                 const responseData = JSON.parse(responseBody);
 
-                                // 提取 base64 图片数据（OpenAI Images API 格式）
-                                const base64Images = [];
-                                if (responseData.data && Array.isArray(responseData.data)) {
-                                    responseData.data.forEach(item => {
-                                        if (item.b64_json) {
-                                            base64Images.push(item.b64_json);
-                                        }
+                                // 调试：打印 Gemini 响应结构（截断 base64）
+                                const debugData = JSON.parse(JSON.stringify(responseData));
+                                try {
+                                    (debugData.candidates || []).forEach(c => {
+                                        (c.content?.parts || []).forEach(p => {
+                                            if (p.inline_data?.data) p.inline_data.data = p.inline_data.data.substring(0, 50) + '...[TRUNCATED]';
+                                            if (p.inlineData?.data) p.inlineData.data = p.inlineData.data.substring(0, 50) + '...[TRUNCATED]';
+                                        });
                                     });
+                                } catch(e) {}
+                                console.log('📦 Gemini 响应结构:', JSON.stringify(debugData, null, 2).substring(0, 2000));
+
+                                // 提取 Gemini 原生响应中的 base64 图片
+                                const base64Images = [];
+                                const candidates = responseData.candidates || [];
+                                for (const candidate of candidates) {
+                                    const parts = candidate.content?.parts || [];
+                                    for (const part of parts) {
+                                        const inlineData = part.inline_data || part.inlineData;
+                                        if (inlineData && inlineData.data) {
+                                            base64Images.push(inlineData.data);
+                                        }
+                                    }
                                 }
 
-                                // 保存图片并获取URLs
+                                console.log(`🖼️ Gemini 返回 ${base64Images.length} 张图片`);
+
                                 if (base64Images.length > 0) {
                                     const saveResult = await saveGenerationData(prompt, base64Images, clientIP, parameters, apiRes.statusCode);
-
                                     if (saveResult && saveResult.imageUrls) {
-                                        // 替换响应中的 b64_json 为 URL
-                                        responseData.data.forEach((item, index) => {
-                                            if (index < saveResult.imageUrls.length) {
-                                                delete item.b64_json; // 删除大的 base64 数据
-                                                item.url = saveResult.imageUrls[index];
-                                            }
+                                        // 返回 OpenAI images API 格式，方便前端直接用
+                                        responseBody = JSON.stringify({
+                                            created: Math.floor(Date.now() / 1000),
+                                            data: saveResult.imageUrls.map(url => ({ url }))
                                         });
-                                        responseBody = JSON.stringify(responseData);
                                     }
                                 }
                             } catch (error) {
@@ -613,7 +666,6 @@ const server = http.createServer((req, res) => {
                             }
                         }
 
-                        // 写入响应
                         res.writeHead(finalStatusCode, {
                             'Content-Type': 'application/json',
                             'Access-Control-Allow-Origin': '*'
@@ -630,115 +682,151 @@ const server = http.createServer((req, res) => {
                 writeLog(req, res, startTime, 500);
             });
 
-            apiReq.write(body);
+            apiReq.write(geminiBodyBuffer);
             apiReq.end();
         });
 
         return;
     }
 
-    // Images Edit API代理：转发到本地的 /v1/images/edits（图生图）
+    // 图生图API代理：通过 Gemini 原生 generateContent API 实现图生图
     if (req.url === '/api/images/edit' && req.method === 'POST') {
         const startTime = Date.now();
-        const chunks = [];
+        let body = '';
 
-        req.on('data', chunk => {
-            chunks.push(chunk);
-        });
+        req.on('data', chunk => { body += chunk.toString(); });
 
         req.on('end', () => {
-            const rawBody = Buffer.concat(chunks);
             const clientIP = getClientIP(req);
+            let requestData;
+            let responseSent = false;
 
-            // 转发请求到本地 Images Edits API（保持原始 content-type，含 boundary）
+            const sendResponse = (statusCode, payload) => {
+                if (responseSent) return;
+                responseSent = true;
+                res.writeHead(statusCode, {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                });
+                res.end(typeof payload === 'string' ? payload : JSON.stringify(payload));
+                writeLog(req, res, startTime, statusCode);
+            };
+
+            try {
+                requestData = JSON.parse(body);
+            } catch (error) {
+                sendResponse(400, { error: '无效的请求数据' });
+                return;
+            }
+
+            const prompt = requestData.prompt || '';
+            const imageBase64 = requestData.imageBase64 || '';
+            const mimeType = requestData.mimeType || 'image/png';
+            const model = requestData.model || 'gemini-3.1-flash-image';
+
+            // 比例和质量映射
+            const aspectRatioMap = { '1-1': '1:1', '16-9': '16:9', '9-16': '9:16', '4-3': '4:3', '3-4': '3:4', '21-9': '21:9' };
+            const qualityMap = { 'standard': '1K', 'medium': '2K', 'hd': '4K' };
+            const imageSize = qualityMap[requestData.quality] || '4K';
+            const aspectRatio = aspectRatioMap[requestData.aspectRatio] || '16:9';
+
+            const parameters = { model, type: 'image-edit', imageSize, aspectRatio };
+
+            // 构建 Gemini 原生请求体
+            const parts = [{ text: prompt }];
+            if (imageBase64) {
+                parts.push({ inline_data: { mime_type: mimeType, data: imageBase64 } });
+            }
+
+            const geminiBody = JSON.stringify({
+                contents: [{ role: 'user', parts }],
+                generationConfig: {
+                    imageConfig: { imageSize, aspectRatio },
+                    responseModalities: ['TEXT', 'IMAGE']
+                }
+            });
+
+            const geminiBodyBuffer = Buffer.from(geminiBody);
+            console.log(`🖼️ 图生图请求(Gemini): prompt="${prompt.substring(0, 50)}", model=${model}, imageSize=${imageSize}, ratio=${aspectRatio}, body=${(geminiBodyBuffer.length / 1024 / 1024).toFixed(2)}MB`);
+
+            const apiUrl = `${API_TARGET}/v1beta/models/${model}:generateContent`;
             const apiReq = http.request(
-                `${API_TARGET}/v1/images/edits`,
+                apiUrl,
                 {
                     method: 'POST',
                     headers: {
-                        'Content-Type': req.headers['content-type'],
-                        'Content-Length': rawBody.length,
-                        'Authorization': req.headers['authorization'] || ''
+                        'Content-Type': 'application/json',
+                        'Content-Length': geminiBodyBuffer.length,
+                        'Authorization': `Bearer ${config.DEFAULT_API_KEY}`
                     }
                 },
                 (apiRes) => {
                     let responseBody = '';
-
-                    apiRes.on('data', chunk => {
-                        responseBody += chunk.toString();
-                    });
+                    apiRes.on('data', chunk => { responseBody += chunk.toString(); });
 
                     apiRes.on('end', async () => {
-                        const finalStatusCode = apiRes.statusCode;
-
                         if (apiRes.statusCode === 429) {
                             const retryAfter = apiRes.headers['retry-after'] || '60';
-                            const errorResponse = {
-                                error: {
-                                    type: 'rate_limit_error',
-                                    message: '请求频率过高，请稍后再试',
-                                    retry_after: parseInt(retryAfter),
-                                    details: `建议等待 ${retryAfter} 秒后重试`
-                                }
-                            };
-                            res.writeHead(429, {
-                                'Content-Type': 'application/json',
-                                'Access-Control-Allow-Origin': '*',
-                                'Retry-After': retryAfter
+                            sendResponse(429, {
+                                error: { type: 'rate_limit_error', message: '请求频率过高，请稍后再试', retry_after: parseInt(retryAfter) }
                             });
-                            res.end(JSON.stringify(errorResponse));
-                            writeLog(req, res, startTime, 429);
                             return;
                         }
 
-                        // 处理响应数据并保存图片
                         if (apiRes.statusCode === 200) {
                             try {
                                 const responseData = JSON.parse(responseBody);
-                                const base64Images = [];
-                                if (responseData.data && Array.isArray(responseData.data)) {
-                                    responseData.data.forEach(item => {
-                                        if (item.b64_json) {
-                                            base64Images.push(item.b64_json);
-                                        }
+
+                                // 调试：打印响应结构（截断 base64）
+                                const debugData = JSON.parse(JSON.stringify(responseData));
+                                try {
+                                    (debugData.candidates || []).forEach(c => {
+                                        (c.content?.parts || []).forEach(p => {
+                                            if (p.inline_data?.data) p.inline_data.data = p.inline_data.data.substring(0, 50) + '...[TRUNCATED]';
+                                            if (p.inlineData?.data) p.inlineData.data = p.inlineData.data.substring(0, 50) + '...[TRUNCATED]';
+                                        });
                                     });
+                                } catch(e) {}
+                                console.log('📦 Gemini 图生图响应结构:', JSON.stringify(debugData, null, 2).substring(0, 2000));
+
+                                // 提取 base64 图片
+                                const base64Images = [];
+                                for (const candidate of (responseData.candidates || [])) {
+                                    for (const part of (candidate.content?.parts || [])) {
+                                        const inlineData = part.inline_data || part.inlineData;
+                                        if (inlineData?.data) base64Images.push(inlineData.data);
+                                    }
                                 }
 
-                                if (base64Images.length > 0) {
-                                    const saveResult = await saveGenerationData('image-edit', base64Images, clientIP, { model: 'gemini-3.1-flash-image', type: 'edit' }, apiRes.statusCode);
+                                console.log(`🖼️ Gemini 图生图返回 ${base64Images.length} 张图片`);
 
-                                    if (saveResult && saveResult.imageUrls) {
-                                        responseData.data.forEach((item, index) => {
-                                            if (index < saveResult.imageUrls.length) {
-                                                delete item.b64_json;
-                                                item.url = saveResult.imageUrls[index];
-                                            }
+                                if (base64Images.length > 0) {
+                                    const saveResult = await saveGenerationData(prompt, base64Images, clientIP, parameters, apiRes.statusCode);
+                                    if (saveResult?.imageUrls) {
+                                        sendResponse(200, {
+                                            created: Math.floor(Date.now() / 1000),
+                                            data: saveResult.imageUrls.map(url => ({ url }))
                                         });
-                                        responseBody = JSON.stringify(responseData);
+                                        return;
                                     }
                                 }
                             } catch (error) {
-                                console.error('⚠️ 处理响应失败:', error);
+                                console.error('⚠️ 处理Gemini图生图响应失败:', error);
                             }
                         }
 
-                        res.writeHead(finalStatusCode, {
-                            'Content-Type': 'application/json',
-                            'Access-Control-Allow-Origin': '*'
-                        });
-                        res.end(responseBody);
-                        writeLog(req, res, startTime, finalStatusCode);
+                        // 非200或处理失败，原样返回
+                        sendResponse(apiRes.statusCode, responseBody);
                     });
                 }
             );
 
             apiReq.on('error', (error) => {
-                res.writeHead(500, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: `API请求失败: ${error.message}` }));
-                writeLog(req, res, startTime, 500);
+                console.error('⚠️ 图生图API请求失败:', error.message);
+                sendResponse(500, { error: `API请求失败: ${error.message}` });
             });
 
-            apiReq.write(rawBody);
+            apiReq.write(geminiBodyBuffer);
             apiReq.end();
         });
 
@@ -770,22 +858,14 @@ const server = http.createServer((req, res) => {
     if (htmlFile) {
         const filePath = path.join(__dirname, htmlFile);
 
-        fs.readFile(filePath, 'utf8', (err, html) => {
+        fs.readFile(filePath, (err, data) => {
             if (err) {
                 res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
                 res.end('服务器错误');
                 return;
             }
-
-            // 将 config.js 中的值注入到 HTML 的 value="" 占位符
-            html = html
-                .replace(/(<input[^>]+id="apiKey"[^>]+value=")[^"]*(")/,   `$1${config.DEFAULT_API_KEY}$2`)
-                .replace(/(<input[^>]+id="apiBase"[^>]+value=")[^"]*(")/,  `$1${config.ENHANCE_API_BASE}$2`)
-                .replace(/(<input[^>]+id="enhanceApiBase"[^>]+value=")[^"]*(")/,`$1${config.ENHANCE_API_BASE}$2`)
-                .replace(/(<input[^>]+id="enhanceApiKey"[^>]+value=")[^"]*(")/,  `$1${config.ENHANCE_API_KEY}$2`);
-
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-            res.end(html);
+            res.end(data);
         });
     } else {
         res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
