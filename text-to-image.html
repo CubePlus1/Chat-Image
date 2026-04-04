@@ -603,8 +603,7 @@
                 <label>图片质量</label>
                 <select id="quality">
                     <option value="standard">标准</option>
-                    <option value="medium">2K</option>
-                    <option value="hd" selected>4K</option>
+                    <option value="medium" selected>2K</option>
                 </select>
             </div>
 
@@ -806,32 +805,28 @@
                     let fetchPromise;
 
                     if (isImageMode) {
-                        // 图+文模式：使用 Images Edit API（/api/images/edit），发送 FormData
+                        // 图+文模式：使用 Images Edit API（/api/images/edit），发送 JSON
                         const primary = uploadedImages.find(img => img.isPrimary);
                         const imageToSend = primary || uploadedImages[0];
 
-                        // 将 base64 转为 Blob
                         const base64Data = imageToSend.base64.split(',')[1];
-                        const binaryString = atob(base64Data);
-                        const bytes = new Uint8Array(binaryString.length);
-                        for (let j = 0; j < binaryString.length; j++) {
-                            bytes[j] = binaryString.charCodeAt(j);
-                        }
-                        const imageBlob = new Blob([bytes], { type: 'image/png' });
+                        const mimeType = imageToSend.base64.match(/^data:(.*?);/)?.[1] || 'image/png';
 
-                        const imageSizeMap = { 'standard': '1K', 'medium': '2K', 'hd': '4K' };
-
-                        const formData = new FormData();
-                        formData.append('image', imageBlob, 'image.png');
-                        formData.append('prompt', prompt);
-                        formData.append('model', 'gemini-3.1-flash-image');
-                        formData.append('size', size);
-                        formData.append('quality', quality);
-                        formData.append('imageSize', imageSizeMap[quality] || '4K');
+                        // 从 size 推导 aspectRatio（如 "1920x1080" → "16-9"）
+                        const sizeToRatio = { '1024x1024': '1-1', '1920x1080': '16-9', '1080x1920': '9-16', '1536x1024': '3-2', '1024x1536': '2-3' };
+                        const aspectRatio = sizeToRatio[size] || '16-9';
 
                         fetchPromise = fetch('/api/images/edit', {
                             method: 'POST',
-                            body: formData
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                prompt: prompt,
+                                model: 'gemini-3.1-flash-image',
+                                imageBase64: base64Data,
+                                mimeType: mimeType,
+                                quality: quality,
+                                aspectRatio: aspectRatio
+                            })
                         });
                     } else {
                         // 纯文生图模式：使用 Images API（/api/images/generate）
@@ -1063,11 +1058,9 @@
             console.log(`   🎯 选择图片 ${bestImage.index + 1}: ${bestImage.width}×${bestImage.height} (最大分辨率)`);
             console.log(`   📂 服务器文件索引: image_${bestImage.serverImageIndex}.png`);
 
-            // 判断是否真正的 4K
-            if (bestImage.width >= 3840 || bestImage.height >= 3840) {
-                console.log(`   ✅ [真4K]`);
-            } else if (bestImage.width >= 1920 || bestImage.height >= 1920) {
-                console.log(`   ⚠️ [2K]`);
+            // 判断分辨率
+            if (bestImage.width >= 1920 || bestImage.height >= 1920) {
+                console.log(`   ✅ [2K]`);
             } else {
                 console.log(`   ⚠️ [低分辨率]`);
             }

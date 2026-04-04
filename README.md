@@ -75,7 +75,7 @@ Chat-Image 是一个基于 Web 的 AI 工具集，提供以下功能：
 
 #### 核心功能
 - **API 代理**
-  - 转发请求到本地 AI API（端口 8045）
+  - 转发请求到本地 AI API（默认端口 8317，可在 `config.js` 中修改）
   - 自动提取并保存生成的图片
 
 - **图片压缩存储**
@@ -101,7 +101,7 @@ Chat-Image 是一个基于 Web 的 AI 工具集，提供以下功能：
 #### 技术特点
 - Node.js 原生 HTTP 服务器
 - 依赖：sharp（图片处理）、archiver（压缩）
-- 端口：8000
+- 端口：56780（可在 `config.js` 中修改）
 - 数据目录：`./data/`
 
 ## 快速开始
@@ -109,7 +109,7 @@ Chat-Image 是一个基于 Web 的 AI 工具集，提供以下功能：
 ### 环境要求
 
 - Node.js 14+
-- 本地 AI API 服务（端口 8045）或其他 OpenAI 兼容 API
+- 本地 AI API 服务（默认端口 8317）或其他 OpenAI 兼容 API
 
 ### 安装步骤
 
@@ -137,17 +137,17 @@ node server.js
 
 4. **访问工具**
 
-- 文生图工具：`http://localhost:8000/text-to-image.html`
-- 聊天工具：`http://localhost:8000/chat.html`
+- 文生图工具：`http://localhost:56780/text-to-image.html`
+- 聊天工具：`http://localhost:56780/chat.html`
 
 ## 配置说明
 
 ### 文生图工具配置
 
 #### 基础配置
-- **API Endpoint**：图片生成 API 地址（默认：`http://localhost:8000/v1/chat/completions`）
+- **API Endpoint**：图片生成 API 地址（默认：`http://localhost:56780/v1/chat/completions`）
 - **API Key**：API 密钥（可选，取决于 API 要求）
-- **Model**：模型名称（默认：`gemini-3-pro-image`）
+- **Model**：模型名称（默认：`gemini-3.1-flash-image`）
 
 #### AI 润色配置（可选）
 - **API Base**：Chat API 地址（默认：`http://localhost:8045/v1`）
@@ -158,19 +158,24 @@ node server.js
 
 ### 聊天工具配置
 
-- **API Base URL**：API 地址（默认：`http://localhost:8045/v1`）
+- **API Base URL**：API 地址（默认：`http://localhost:8317/v1`）
 - **API Key**：API 密钥
 - **Model**：选择模型（Gemini、Claude 等）
 
 ### 服务器配置
 
-编辑 `server.js` 修改以下配置：
+编辑 `config.js` 修改以下配置：
 
 ```javascript
-const PORT = 8000;                          // 服务器端口
-const API_TARGET = 'http://127.0.0.1:8045'; // AI API 地址
-const DATA_DIR = path.join(__dirname, 'data'); // 数据存储目录
-const LOG_DIR = 'C:\\Users\\lenovo\\Desktop\\日志'; // 日志目录
+module.exports = {
+    PORT: 56780,                                  // 服务器端口
+    API_TARGET: 'http://127.0.0.1:8317',          // AI API 地址
+    DEFAULT_API_KEY: 'sk-default',                // 默认 API Key
+    DEFAULT_API_BASE: 'http://localhost:56780',   // 前端默认 API 地址
+    ENHANCE_API_BASE: 'http://localhost:8317/v1', // AI 润色 API 地址
+    ENHANCE_API_KEY: 'sk-default',                // AI 润色 API Key
+    ENHANCE_API_MODEL: 'gemini-3-flash',          // AI 润色模型
+};
 ```
 
 ## 使用方法
@@ -210,7 +215,7 @@ const LOG_DIR = 'C:\\Users\\lenovo\\Desktop\\日志'; // 日志目录
 
 ### 查看生成历史
 
-访问 `http://localhost:8000/api/history` 查看所有生成记录的 JSON 数据。
+访问 `http://localhost:56780/api/history` 查看所有生成记录的 JSON 数据。
 
 每个记录包含：
 - 时间戳
@@ -290,10 +295,14 @@ Chat-Image/
 ├── text-to-image.html    # AI 文生图工具（单文件）
 ├── chat.html             # AI 聊天工具（单文件）
 ├── server.js             # Node.js 服务器
+├── config.js             # 统一配置文件（端口、API 地址等）
+├── config.example.js     # 配置文件模板
 ├── start.bat             # Windows 启动脚本
 ├── package.json          # 依赖配置
 ├── CLAUDE.md             # 项目开发文档
+├── API.md                # API 接口文档
 ├── README.md             # 本文件
+├── test/                 # 测试脚本
 └── data/                 # 生成数据存储目录（自动创建）
     └── 20250203_143052/  # 时间戳文件夹
         ├── image_0.png   # 原图
@@ -316,16 +325,16 @@ Chat-Image/
 
 ## 常见问题
 
-### 1. 服务器启动失败：端口 8000 被占用
+### 1. 服务器启动失败：端口被占用
 
 **解决方案**：
 - Windows：运行 `start.bat` 会自动检测并关闭占用进程
-- 手动：修改 `server.js` 中的 `PORT` 变量
+- 手动：修改 `config.js` 中的 `PORT` 变量
 
 ### 2. 图片生成失败
 
 **检查项**：
-- 确认本地 AI API（端口 8045）正常运行
+- 确认本地 AI API（默认端口 8317）正常运行
 - 检查 API Key 是否正确
 - 打开调试模式查看详细错误信息
 - 查看浏览器控制台和服务器日志
@@ -376,13 +385,13 @@ HTML 工具采用单文件架构，所有代码（HTML、CSS、JavaScript）都�
 编辑 `text-to-image.html` 中的 `aspectRatio` 选择器。
 
 #### 自定义压缩配置
-修改 `server.js` 中的 `COMPRESSION_CONFIGS` 对象。
+修改 `server.js` 中的压缩配置参数。
 
 ### 测试不同 API
 
 工具支持任何 OpenAI 兼容的 API：
 
-1. **本地代理**：`http://localhost:8045/v1`（默认）
+1. **本地代理**：`http://localhost:8317/v1`（默认）
 2. **OpenAI**：`https://api.openai.com/v1`
 3. **自定义端点**：任何支持 Chat Completions 格式的 API
 

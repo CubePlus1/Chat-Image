@@ -136,7 +136,7 @@ async function saveGenerationData(prompt, base64Images, clientIP, parameters, ap
         fs.writeFileSync(imagePath, bestBuffer);
         const generatedImages = [imageFilename];
 
-        // 生成图片URL（返回原图，保留4K分辨率）
+        // 生成图片URL（返回原图，保留原始分辨率）
         const imageUrl = `/images/${folderName}/original/${imageFilename}`;
         const imageUrls = [imageUrl];
 
@@ -551,8 +551,8 @@ const server = http.createServer((req, res) => {
             const model  = requestData.model  || 'gemini-3.1-flash-image';
 
             // quality → Gemini imageSize 映射（参考图生图逻辑）
-            const qualityMap = { 'standard': '1K', 'medium': '2K', 'hd': '4K' };
-            const imageSize = qualityMap[requestData.quality] || '4K';
+            const qualityMap = { 'standard': '1K', 'medium': '2K', 'hd': '2K' };
+            const imageSize = qualityMap[requestData.quality] || '2K';
 
             // size → aspectRatio 映射
             const sizeToRatio = {
@@ -726,8 +726,8 @@ const server = http.createServer((req, res) => {
 
             // 比例和质量映射
             const aspectRatioMap = { '1-1': '1:1', '16-9': '16:9', '9-16': '9:16', '4-3': '4:3', '3-4': '3:4', '21-9': '21:9' };
-            const qualityMap = { 'standard': '1K', 'medium': '2K', 'hd': '4K' };
-            const imageSize = qualityMap[requestData.quality] || '4K';
+            const qualityMap = { 'standard': '1K', 'medium': '2K', 'hd': '2K' };
+            const imageSize = qualityMap[requestData.quality] || '2K';
             const aspectRatio = aspectRatioMap[requestData.aspectRatio] || '16:9';
 
             const parameters = { model, type: 'image-edit', imageSize, aspectRatio };
