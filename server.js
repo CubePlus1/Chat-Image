@@ -550,8 +550,8 @@ const server = http.createServer((req, res) => {
             const prompt = requestData.prompt || '';
             const model  = requestData.model  || 'gemini-3.1-flash-image';
 
-            // quality → Gemini imageSize 映射（参考图生图逻辑）
-            const qualityMap = { 'standard': '1K', 'medium': '2K', 'hd': '2K' };
+            // quality → Gemini imageSize 映射
+            const qualityMap = { 'standard': '1K', 'medium': '2K', 'hd': '4K' };
             const imageSize = qualityMap[requestData.quality] || '2K';
 
             // size → aspectRatio 映射
@@ -726,7 +726,7 @@ const server = http.createServer((req, res) => {
 
             // 比例和质量映射
             const aspectRatioMap = { '1-1': '1:1', '16-9': '16:9', '9-16': '9:16', '4-3': '4:3', '3-4': '3:4', '21-9': '21:9' };
-            const qualityMap = { 'standard': '1K', 'medium': '2K', 'hd': '2K' };
+            const qualityMap = { 'standard': '1K', 'medium': '2K', 'hd': '4K' };
             const imageSize = qualityMap[requestData.quality] || '2K';
             const aspectRatio = aspectRatioMap[requestData.aspectRatio] || '16:9';
 
@@ -741,7 +741,11 @@ const server = http.createServer((req, res) => {
             const geminiBody = JSON.stringify({
                 contents: [{ role: 'user', parts }],
                 generationConfig: {
-                    responseModalities: ['IMAGE']
+                    imageConfig: {
+                        imageSize: imageSize,
+                        aspectRatio: aspectRatio
+                    },
+                    responseModalities: ['TEXT', 'IMAGE']
                 }
             });
 

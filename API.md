@@ -32,7 +32,7 @@ Content-Type: application/json
 | `prompt` | string | ✅ | — | 图片描述文本 |
 | `model` | string | ❌ | `gemini-3.1-flash-image` | 生图模型 |
 | `size` | string | ❌ | `1920x1080` | 尺寸，格式 `WxH` |
-| `quality` | string | ❌ | `hd` | `standard` / `hd` |
+| `quality` | string | ❌ | `hd` | `standard`(1K) / `medium`(2K) / `hd`(4K) |
 | `n` | number | ❌ | `1` | 生成数量（当前仅保留最大分辨率那张） |
 
 ### 成功响应 `200`
@@ -101,18 +101,29 @@ Content-Type: application/json
 
 ### 请求头
 ```
-Content-Type: multipart/form-data
+Content-Type: application/json
 ```
 
-### 请求体（FormData）
+### 请求体
+```json
+{
+  "prompt":      "将背景换成海边夕阳",
+  "imageBase64": "<base64编码的图片数据，不含 data:image/...;base64, 前缀>",
+  "mimeType":    "image/png",
+  "model":       "gemini-3.1-flash-image",
+  "quality":     "medium",
+  "aspectRatio": "16-9"
+}
+```
 
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `image` | File | ✅ | 参考图片（PNG） |
-| `prompt` | string | ✅ | 编辑描述 |
-| `model` | string | ❌ | 默认 `gemini-3.1-flash-image` |
-| `size` | string | ❌ | 目标尺寸，如 `1920x1080` |
-| `quality` | string | ❌ | `standard` / `hd` |
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|---|---|---|---|---|
+| `prompt` | string | ✅ | — | 编辑描述 |
+| `imageBase64` | string | ✅ | — | 参考图片的 Base64 数据 |
+| `mimeType` | string | ❌ | `image/png` | 图片 MIME 类型 |
+| `model` | string | ❌ | `gemini-3.1-flash-image` | 模型名 |
+| `quality` | string | ❌ | `medium` | `standard`(1K) / `medium`(2K) / `hd`(4K) |
+| `aspectRatio` | string | ❌ | `16-9` | `1-1` / `16-9` / `9-16` / `4-3` / `3-4` / `21-9` |
 
 ### 成功响应 `200`
 ```json
@@ -136,7 +147,7 @@ Content-Type: multipart/form-data
 | `filename` | 固定为 `image_0.png` |
 
 ```
-GET /images/20260309_210743_363/original/image_0.png   → 原图（4K）
+GET /images/20260309_210743_363/original/image_0.png   → 原图
 GET /images/20260309_210743_363/preview/image_0.png    → 预览图
 GET /images/20260309_210743_363/thumbnail/image_0.png  → 缩略图
 ```
