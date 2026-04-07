@@ -741,8 +741,7 @@ const server = http.createServer((req, res) => {
             const geminiBody = JSON.stringify({
                 contents: [{ role: 'user', parts }],
                 generationConfig: {
-                    imageConfig: { imageSize, aspectRatio },
-                    responseModalities: ['TEXT', 'IMAGE']
+                    responseModalities: ['IMAGE']
                 }
             });
 
