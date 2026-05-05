@@ -9,12 +9,10 @@ const OUTPUT_DIR = join(__dirname, 'output-2k');
 
 // ── 质量档位 ──────────────────────────────────────────────────
 // standard → Gemini 1K  （最快，文件最小）
-// medium   → Gemini 2K
-// hd       → Gemini 4K  （默认，最高质量）
+// medium   → Gemini 2K  （默认）
 const QUALITY_MAP = {
   standard: { label: '1K', size: '2560x1440' },
   medium:   { label: '2K', size: '2560x1440' },
-  hd:       { label: '4K', size: '2560x1440' },
 };
 
 const PAGES = [

@@ -548,64 +548,71 @@ const server = http.createServer((req, res) => {
             }
 
             const prompt = requestData.prompt || '';
-            const model  = requestData.model  || 'gemini-3.1-flash-image';
+            const model  = requestData.model  || 'gpt-image-2';
 
-            // quality → Gemini imageSize 映射
-            const qualityMap = { 'standard': '1K', 'medium': '2K', 'hd': '4K' };
-            const imageSize = qualityMap[requestData.quality] || '2K';
-
-            // size → aspectRatio 映射
-            const sizeToRatio = {
+            // 前端 size → 比例 key，再按 quality 选 1K/2K 档（gpt-image-2 上限 2K，宽高需 16 整除）
+            const sizeToAspect = {
                 '1920x1080': '16:9', '2560x1440': '16:9', '1280x720': '16:9',
-                '1080x1920': '9:16', '1024x1024': '1:1', '1:1': '1:1',
+                '1080x1920': '9:16', '1024x1024': '1:1',
+                '1:1': '1:1', '16:9': '16:9', '9:16': '9:16',
                 '4:3': '4:3', '3:4': '3:4', '21:9': '21:9'
             };
+            const aspectToApiSize = {
+                '1:1':  { '1K': '1024x1024', '2K': '2048x2048' },
+                '16:9': { '1K': '1536x1024', '2K': '2048x1152' },
+                '9:16': { '1K': '1024x1536', '2K': '1152x2048' },
+                '4:3':  { '1K': '1024x768',  '2K': '2048x1536' },
+                '3:4':  { '1K': '768x1024',  '2K': '1536x2048' },
+                '21:9': { '1K': '1536x640',  '2K': '2048x880'  }
+            };
             const sizeStr = requestData.size || '1920x1080';
-            const aspectRatio = sizeToRatio[sizeStr] || '16:9';
+            const aspect = sizeToAspect[sizeStr] || '1:1';
+            // quality: standard=1K低画质 / medium=2K中画质 / hd=2K高画质（2K为上限）
+            const tier = requestData.quality === 'standard' ? '1K' : '2K';
+            const apiSize = aspectToApiSize[aspect][tier];
+
+            const qualityMap = { 'standard': 'low', 'medium': 'medium', 'hd': 'high' };
+            const apiQuality = qualityMap[requestData.quality] || 'high';
 
             const parameters = {
                 model,
                 size: sizeStr,
-                imageSize,
-                aspectRatio,
+                apiSize,
                 quality: requestData.quality || 'hd',
                 count: requestData.n || 1
             };
 
-            // 构建 Gemini 原生 generateContent 请求体
-            const geminiBody = JSON.stringify({
-                contents: [{
-                    role: 'user',
-                    parts: [{ text: prompt }]
-                }],
-                generationConfig: {
-                    imageConfig: {
-                        imageSize: imageSize,
-                        aspectRatio: aspectRatio
-                    },
-                    responseModalities: ['TEXT', 'IMAGE']
-                }
+            // 构建 OpenAI 风格 /v1/images/generations 请求体
+            const reqBody = JSON.stringify({
+                model,
+                prompt,
+                n: requestData.n || 1,
+                size: apiSize,
+                quality: apiQuality,
+                response_format: 'b64_json'
             });
 
-            const geminiBodyBuffer = Buffer.from(geminiBody);
-            console.log(`🖼️ 文生图请求(Gemini): prompt="${prompt.substring(0, 50)}", model=${model}, imageSize=${imageSize}, ratio=${aspectRatio}`);
+            const reqBodyBuffer = Buffer.from(reqBody);
+            console.log(`🖼️ 文生图请求(OpenAI): prompt="${prompt.substring(0, 50)}", model=${model}, size=${apiSize}, quality=${apiQuality}`);
 
-            const apiUrl = `${API_TARGET}/v1beta/models/${model}:generateContent`;
+            const apiUrl = `${API_TARGET}/v1/images/generations`;
             const apiReq = http.request(
                 apiUrl,
                 {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Content-Length': geminiBodyBuffer.length,
+                        'Content-Length': reqBodyBuffer.length,
                         'Authorization': `Bearer ${config.DEFAULT_API_KEY}`
                     }
                 },
                 (apiRes) => {
-                    let responseBody = '';
-                    apiRes.on('data', chunk => { responseBody += chunk.toString(); });
+                    const chunks = [];
+                    apiRes.on('data', chunk => { chunks.push(chunk); });
 
                     apiRes.on('end', async () => {
+                        let responseBody = Buffer.concat(chunks).toString('utf8');
+
                         if (apiRes.statusCode === 429) {
                             const retryAfter = apiRes.headers['retry-after'] || '60';
                             res.writeHead(429, {
@@ -624,37 +631,26 @@ const server = http.createServer((req, res) => {
                             try {
                                 const responseData = JSON.parse(responseBody);
 
-                                // 调试：打印 Gemini 响应结构（截断 base64）
+                                // 调试：打印响应结构（截断 base64）
                                 const debugData = JSON.parse(JSON.stringify(responseData));
                                 try {
-                                    (debugData.candidates || []).forEach(c => {
-                                        (c.content?.parts || []).forEach(p => {
-                                            if (p.inline_data?.data) p.inline_data.data = p.inline_data.data.substring(0, 50) + '...[TRUNCATED]';
-                                            if (p.inlineData?.data) p.inlineData.data = p.inlineData.data.substring(0, 50) + '...[TRUNCATED]';
-                                        });
+                                    (debugData.data || []).forEach(d => {
+                                        if (d.b64_json) d.b64_json = d.b64_json.substring(0, 50) + '...[TRUNCATED]';
                                     });
                                 } catch(e) {}
-                                console.log('📦 Gemini 响应结构:', JSON.stringify(debugData, null, 2).substring(0, 2000));
+                                console.log('📦 OpenAI 文生图响应结构:', JSON.stringify(debugData, null, 2).substring(0, 1000));
 
-                                // 提取 Gemini 原生响应中的 base64 图片
+                                // 提取 OpenAI 风格响应中的 base64 图片
                                 const base64Images = [];
-                                const candidates = responseData.candidates || [];
-                                for (const candidate of candidates) {
-                                    const parts = candidate.content?.parts || [];
-                                    for (const part of parts) {
-                                        const inlineData = part.inline_data || part.inlineData;
-                                        if (inlineData && inlineData.data) {
-                                            base64Images.push(inlineData.data);
-                                        }
-                                    }
+                                for (const item of (responseData.data || [])) {
+                                    if (item.b64_json) base64Images.push(item.b64_json);
                                 }
 
-                                console.log(`🖼️ Gemini 返回 ${base64Images.length} 张图片`);
+                                console.log(`🖼️ OpenAI 返回 ${base64Images.length} 张图片`);
 
                                 if (base64Images.length > 0) {
                                     const saveResult = await saveGenerationData(prompt, base64Images, clientIP, parameters, apiRes.statusCode);
                                     if (saveResult && saveResult.imageUrls) {
-                                        // 返回 OpenAI images API 格式，方便前端直接用
                                         responseBody = JSON.stringify({
                                             created: Math.floor(Date.now() / 1000),
                                             data: saveResult.imageUrls.map(url => ({ url }))
@@ -664,6 +660,8 @@ const server = http.createServer((req, res) => {
                             } catch (error) {
                                 console.error('⚠️ 处理响应失败:', error);
                             }
+                        } else {
+                            console.error(`⚠️ 上游返回 ${apiRes.statusCode}:`, responseBody.substring(0, 500));
                         }
 
                         res.writeHead(finalStatusCode, {
@@ -682,7 +680,7 @@ const server = http.createServer((req, res) => {
                 writeLog(req, res, startTime, 500);
             });
 
-            apiReq.write(geminiBodyBuffer);
+            apiReq.write(reqBodyBuffer);
             apiReq.end();
         });
 
@@ -722,52 +720,80 @@ const server = http.createServer((req, res) => {
             const prompt = requestData.prompt || '';
             const imageBase64 = requestData.imageBase64 || '';
             const mimeType = requestData.mimeType || 'image/png';
-            const model = requestData.model || 'gemini-3.1-flash-image';
+            const model = requestData.model || 'gpt-image-2';
 
-            // 比例和质量映射
-            const aspectRatioMap = { '1-1': '1:1', '16-9': '16:9', '9-16': '9:16', '4-3': '4:3', '3-4': '3:4', '21-9': '21:9' };
-            const qualityMap = { 'standard': '1K', 'medium': '2K', 'hd': '4K' };
-            const imageSize = qualityMap[requestData.quality] || '2K';
-            const aspectRatio = aspectRatioMap[requestData.aspectRatio] || '16:9';
+            // 前端 aspectRatio + quality → gpt-image-2 size（上限 2K，需 16 整除）
+            const aspectToApiSize = {
+                '1-1':  { '1K': '1024x1024', '2K': '2048x2048' },
+                '16-9': { '1K': '1536x1024', '2K': '2048x1152' },
+                '9-16': { '1K': '1024x1536', '2K': '1152x2048' },
+                '4-3':  { '1K': '1024x768',  '2K': '2048x1536' },
+                '3-4':  { '1K': '768x1024',  '2K': '1536x2048' },
+                '21-9': { '1K': '1536x640',  '2K': '2048x880'  }
+            };
+            const aspectKey = aspectToApiSize[requestData.aspectRatio] ? requestData.aspectRatio : '16-9';
+            const tier = requestData.quality === 'standard' ? '1K' : '2K';
+            const apiSize = aspectToApiSize[aspectKey][tier];
 
-            const parameters = { model, type: 'image-edit', imageSize, aspectRatio };
+            const qualityMap = { 'standard': 'low', 'medium': 'medium', 'hd': 'high' };
+            const apiQuality = qualityMap[requestData.quality] || 'medium';
 
-            // 构建 Gemini 原生请求体
-            const parts = [{ text: prompt }];
-            if (imageBase64) {
-                parts.push({ inline_data: { mime_type: mimeType, data: imageBase64 } });
+            const parameters = { model, type: 'image-edit', apiSize, quality: requestData.quality || 'medium' };
+
+            if (!imageBase64) {
+                sendResponse(400, { error: '缺少 imageBase64 字段' });
+                return;
             }
 
-            const geminiBody = JSON.stringify({
-                contents: [{ role: 'user', parts }],
-                generationConfig: {
-                    imageConfig: {
-                        imageSize: imageSize,
-                        aspectRatio: aspectRatio
-                    },
-                    responseModalities: ['TEXT', 'IMAGE']
-                }
-            });
+            // 构建 multipart/form-data，调用 OpenAI 风格 /v1/images/edits
+            const boundary = '----ChatImageBoundary' + Math.random().toString(16).slice(2);
+            const imageBuffer = Buffer.from(imageBase64, 'base64');
+            const fileExt = (mimeType.split('/')[1] || 'png').toLowerCase();
+            const filename = `image.${fileExt === 'jpeg' ? 'jpg' : fileExt}`;
 
-            const geminiBodyBuffer = Buffer.from(geminiBody);
-            console.log(`🖼️ 图生图请求(Gemini): prompt="${prompt.substring(0, 50)}", model=${model}, imageSize=${imageSize}, ratio=${aspectRatio}, body=${(geminiBodyBuffer.length / 1024 / 1024).toFixed(2)}MB`);
+            const textField = (name, value) => Buffer.concat([
+                Buffer.from(`--${boundary}\r\n`),
+                Buffer.from(`Content-Disposition: form-data; name="${name}"\r\n\r\n`),
+                Buffer.from(`${value}\r\n`)
+            ]);
+            const fileField = (name, fname, contentType, buf) => Buffer.concat([
+                Buffer.from(`--${boundary}\r\n`),
+                Buffer.from(`Content-Disposition: form-data; name="${name}"; filename="${fname}"\r\n`),
+                Buffer.from(`Content-Type: ${contentType}\r\n\r\n`),
+                buf,
+                Buffer.from(`\r\n`)
+            ]);
 
-            const apiUrl = `${API_TARGET}/v1beta/models/${model}:generateContent`;
+            const multipartBody = Buffer.concat([
+                textField('model', model),
+                textField('prompt', prompt),
+                textField('size', apiSize),
+                textField('quality', apiQuality),
+                textField('n', '1'),
+                fileField('image', filename, mimeType, imageBuffer),
+                Buffer.from(`--${boundary}--\r\n`)
+            ]);
+
+            console.log(`🖼️ 图生图请求(OpenAI): prompt="${prompt.substring(0, 50)}", model=${model}, size=${apiSize}, quality=${apiQuality}, body=${(multipartBody.length / 1024 / 1024).toFixed(2)}MB`);
+
+            const apiUrl = `${API_TARGET}/v1/images/edits`;
             const apiReq = http.request(
                 apiUrl,
                 {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'Content-Length': geminiBodyBuffer.length,
+                        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+                        'Content-Length': multipartBody.length,
                         'Authorization': `Bearer ${config.DEFAULT_API_KEY}`
                     }
                 },
                 (apiRes) => {
-                    let responseBody = '';
-                    apiRes.on('data', chunk => { responseBody += chunk.toString(); });
+                    const chunks = [];
+                    apiRes.on('data', chunk => { chunks.push(chunk); });
 
                     apiRes.on('end', async () => {
+                        const responseBody = Buffer.concat(chunks).toString('utf8');
+
                         if (apiRes.statusCode === 429) {
                             const retryAfter = apiRes.headers['retry-after'] || '60';
                             sendResponse(429, {
@@ -780,28 +806,20 @@ const server = http.createServer((req, res) => {
                             try {
                                 const responseData = JSON.parse(responseBody);
 
-                                // 调试：打印响应结构（截断 base64）
                                 const debugData = JSON.parse(JSON.stringify(responseData));
                                 try {
-                                    (debugData.candidates || []).forEach(c => {
-                                        (c.content?.parts || []).forEach(p => {
-                                            if (p.inline_data?.data) p.inline_data.data = p.inline_data.data.substring(0, 50) + '...[TRUNCATED]';
-                                            if (p.inlineData?.data) p.inlineData.data = p.inlineData.data.substring(0, 50) + '...[TRUNCATED]';
-                                        });
+                                    (debugData.data || []).forEach(d => {
+                                        if (d.b64_json) d.b64_json = d.b64_json.substring(0, 50) + '...[TRUNCATED]';
                                     });
                                 } catch(e) {}
-                                console.log('📦 Gemini 图生图响应结构:', JSON.stringify(debugData, null, 2).substring(0, 2000));
+                                console.log('📦 OpenAI 图生图响应结构:', JSON.stringify(debugData, null, 2).substring(0, 1000));
 
-                                // 提取 base64 图片
                                 const base64Images = [];
-                                for (const candidate of (responseData.candidates || [])) {
-                                    for (const part of (candidate.content?.parts || [])) {
-                                        const inlineData = part.inline_data || part.inlineData;
-                                        if (inlineData?.data) base64Images.push(inlineData.data);
-                                    }
+                                for (const item of (responseData.data || [])) {
+                                    if (item.b64_json) base64Images.push(item.b64_json);
                                 }
 
-                                console.log(`🖼️ Gemini 图生图返回 ${base64Images.length} 张图片`);
+                                console.log(`🖼️ OpenAI 图生图返回 ${base64Images.length} 张图片`);
 
                                 if (base64Images.length > 0) {
                                     const saveResult = await saveGenerationData(prompt, base64Images, clientIP, parameters, apiRes.statusCode);
@@ -814,11 +832,12 @@ const server = http.createServer((req, res) => {
                                     }
                                 }
                             } catch (error) {
-                                console.error('⚠️ 处理Gemini图生图响应失败:', error);
+                                console.error('⚠️ 处理OpenAI图生图响应失败:', error);
                             }
+                        } else {
+                            console.error(`⚠️ 图生图上游返回 ${apiRes.statusCode}:`, responseBody.substring(0, 500));
                         }
 
-                        // 非200或处理失败，原样返回
                         sendResponse(apiRes.statusCode, responseBody);
                     });
                 }
@@ -829,7 +848,7 @@ const server = http.createServer((req, res) => {
                 sendResponse(500, { error: `API请求失败: ${error.message}` });
             });
 
-            apiReq.write(geminiBodyBuffer);
+            apiReq.write(multipartBody);
             apiReq.end();
         });
 

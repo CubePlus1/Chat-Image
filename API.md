@@ -20,9 +20,9 @@ Content-Type: application/json
 ```json
 {
   "prompt":  "a cute cartoon cat sitting on a cloud, flat design",
-  "model":   "gemini-3.1-flash-image",
+  "model":   "gpt-image-2",
   "size":    "1920x1080",
-  "quality": "hd",
+  "quality": "medium",
   "n":       1
 }
 ```
@@ -30,10 +30,12 @@ Content-Type: application/json
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 |---|---|---|---|---|
 | `prompt` | string | ✅ | — | 图片描述文本 |
-| `model` | string | ❌ | `gemini-3.1-flash-image` | 生图模型 |
-| `size` | string | ❌ | `1920x1080` | 尺寸，格式 `WxH` |
-| `quality` | string | ❌ | `hd` | `standard`(1K) / `medium`(2K) / `hd`(4K) |
-| `n` | number | ❌ | `1` | 生成数量（当前仅保留最大分辨率那张） |
+| `model` | string | ❌ | `gpt-image-2` | 生图模型 |
+| `size` | string | ❌ | `1920x1080` | 期望尺寸或比例（`1920x1080`/`1024x1024`/`16:9`/`1:1` 等），后端自动映射为 gpt-image-2 支持的尺寸 |
+| `quality` | string | ❌ | `hd` | `standard`(1K档) / `medium`(2K档·中画质) / `hd`(2K档·高画质) |
+| `n` | number | ❌ | `1` | 生成数量（仅保留最大分辨率那张） |
+
+> 实际向上游发出的尺寸需满足 gpt-image-2 约束（宽高均 16 整除，最高 2K）。后端按 `size`+`quality` 映射到：1:1→`1024x1024`/`2048x2048`，16:9→`1536x1024`/`2048x1152`，9:16→`1024x1536`/`1152x2048`，4:3→`1024x768`/`2048x1536`，3:4→`768x1024`/`1536x2048`，21:9→`1536x640`/`2048x880`。
 
 ### 成功响应 `200`
 ```json
@@ -110,7 +112,7 @@ Content-Type: application/json
   "prompt":      "将背景换成海边夕阳",
   "imageBase64": "<base64编码的图片数据，不含 data:image/...;base64, 前缀>",
   "mimeType":    "image/png",
-  "model":       "gemini-3.1-flash-image",
+  "model":       "gpt-image-2",
   "quality":     "medium",
   "aspectRatio": "16-9"
 }
@@ -121,9 +123,11 @@ Content-Type: application/json
 | `prompt` | string | ✅ | — | 编辑描述 |
 | `imageBase64` | string | ✅ | — | 参考图片的 Base64 数据 |
 | `mimeType` | string | ❌ | `image/png` | 图片 MIME 类型 |
-| `model` | string | ❌ | `gemini-3.1-flash-image` | 模型名 |
-| `quality` | string | ❌ | `medium` | `standard`(1K) / `medium`(2K) / `hd`(4K) |
+| `model` | string | ❌ | `gpt-image-2` | 模型名 |
+| `quality` | string | ❌ | `medium` | `standard`(1K) / `medium`(2K中) / `hd`(2K高) |
 | `aspectRatio` | string | ❌ | `16-9` | `1-1` / `16-9` / `9-16` / `4-3` / `3-4` / `21-9` |
+
+> 后端自动将 `imageBase64` 转为 `multipart/form-data` 调上游 `/v1/images/edits`，并按 aspect+quality 映射到 16 整除的实际尺寸（同上）。
 
 ### 成功响应 `200`
 ```json
@@ -188,7 +192,7 @@ GET /images/20260309_210743_363/thumbnail/image_0.png  → 缩略图
     "prompt":      "a cute cartoon cat",
     "imageCount":  1,
     "thumbnailUrls": ["/images/20260309_210743_363/thumbnail/image_0.png"],
-    "parameters":  { "model": "gemini-3.1-flash-image", "size": "1024x1024" }
+    "parameters":  { "model": "gpt-image-2", "size": "1024x1024" }
   }
 ]
 ```
